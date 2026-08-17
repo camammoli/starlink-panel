@@ -40,6 +40,7 @@ canvas{display:block;max-width:100%}
 .alerts{margin-top:8px}
 .alert-item{font-size:12px;padding:6px 10px;border-radius:6px;background:rgba(224,90,74,.12);
   color:#ff9a8c;margin-bottom:6px;border:1px solid rgba(224,90,74,.3)}
+.alert-item.alert-info{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
 .empty{color:var(--muted);font-size:12px}
 
 .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}

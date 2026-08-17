@@ -33,6 +33,17 @@ const STATE_LABELS = {
   NO_PINGS: ['err', 'Sin respuesta'],
 };
 
+// Alertas que el dish reporta como parte de su operación normal — no son
+// problemas, así que se muestran aparte (tono neutro) en vez de mezclarse
+// con las que sí requieren atención.
+const INFO_ALERTS = {
+  alert_install_pending: 'Hay una actualización de software descargada, lista para instalarse en el próximo reinicio (corta internet un momento).',
+  alert_is_heating: 'El dish está calentándose (normal en frío, por ejemplo para derretir nieve/escarcha).',
+  alert_is_power_save_idle: 'El dish entró en modo de ahorro de energía por inactividad — normal.',
+  alert_roaming: 'El dish está siendo usado fuera de su dirección de servicio registrada.',
+  alert_dbf_telem_stale: 'Telemetría interna del dish desactualizada — informativo, no requiere acción.',
+};
+
 function updateCards(latest) {
   const badge = document.getElementById('conn-badge');
   const text = document.getElementById('conn-text');
@@ -69,13 +80,23 @@ function updateCards(latest) {
 
   const alertsBox = document.getElementById('alerts-box');
   const activeAlerts = Object.keys(latest.alerts || {});
-  if (!activeAlerts.length) {
-    alertsBox.innerHTML = '<div class="empty">Sin alertas.</div>';
+  const realAlerts = activeAlerts.filter(a => !INFO_ALERTS[a]);
+  const infoAlerts = activeAlerts.filter(a => INFO_ALERTS[a]);
+
+  let html = '';
+  if (!realAlerts.length) {
+    html += '<div class="empty">Sin alertas.</div>';
   } else {
-    alertsBox.innerHTML = activeAlerts
+    html += realAlerts
       .map(a => `<div class="alert-item">${a.replace('alert_', '').replaceAll('_', ' ')}</div>`)
       .join('');
   }
+  if (infoAlerts.length) {
+    html += infoAlerts
+      .map(a => `<div class="alert-item alert-info">ℹ️ ${INFO_ALERTS[a]}</div>`)
+      .join('');
+  }
+  alertsBox.innerHTML = html;
 
   window._dishDirection = { az: s.direction_azimuth, el: s.direction_elevation };
 }
@@ -336,9 +357,15 @@ function fmtFecha(ts) {
 async function loadHistory() {
   const now = Math.floor(Date.now() / 1000);
   const from = now - histRangeSeconds();
-  const res = await fetch(`/api/history?from=${from}&to=${now}`);
-  const data = await res.json();
-  const rows = data.rows || [];
+  let rows = [];
+  try {
+    const res = await fetch(`/api/history?from=${from}&to=${now}`);
+    const data = await res.json();
+    rows = data.rows || [];
+  } catch (e) {
+    document.getElementById('hist-count').textContent = 'No se pudo cargar el historial.';
+    return;
+  }
 
   document.getElementById('hist-count').textContent = `${rows.length} puntos`;
 
