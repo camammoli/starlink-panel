@@ -1,0 +1,18 @@
+{
+  "latitude": null,
+  "longitude": null,
+  "telegram_bot_token": null,
+  "telegram_chat_id": null,
+  "alerts": {
+    "enabled": true,
+    "disconnect_after_s": 120,
+    "reconnect_notify": true,
+    "obstruction_threshold": 0.15,
+    "obstruction_sustained_s": 300,
+    "hardware_alerts": true
+  },
+  "history": {
+    "retention_days": 90,
+    "resolution_s": 60
+  }
+}

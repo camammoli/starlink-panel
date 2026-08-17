@@ -22,6 +22,7 @@
     <div class="card"><div class="k">Uptime</div><div class="v" id="v-uptime">—</div></div>
     <div class="card"><div class="k">GPS</div><div class="v" id="v-gps">—</div></div>
     <div class="card"><div class="k">SNR</div><div class="v" id="v-snr">—</div></div>
+    <div class="card"><div class="k">Obstrucción prolongada</div><div class="v" id="v-obstr-detail">—</div></div>
   </div>
 
   <div class="panels">
@@ -54,6 +55,39 @@
   <div class="box">
     <h2>Alertas activas</h2>
     <div class="alerts" id="alerts-box"><div class="empty">Sin alertas.</div></div>
+  </div>
+
+  <div class="box" style="margin-top:16px">
+    <h2>Historial</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <select id="hist-range" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
+        <option value="1">Última hora</option>
+        <option value="6">Últimas 6 horas</option>
+        <option value="24" selected>Últimas 24 horas</option>
+        <option value="168">Últimos 7 días</option>
+        <option value="720">Últimos 30 días</option>
+      </select>
+      <button id="btn-hist-refresh">Actualizar</button>
+      <button id="btn-hist-export">Exportar CSV</button>
+      <span class="hint" id="hist-count" style="margin-top:0"></span>
+    </div>
+    <canvas id="hist-chart" width="1000" height="220"></canvas>
+    <div style="max-height:320px;overflow:auto;margin-top:14px;border:1px solid var(--line);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead style="position:sticky;top:0;background:var(--panel2)">
+          <tr>
+            <th style="text-align:left;padding:6px 10px">Fecha</th>
+            <th style="text-align:right;padding:6px 10px">Latencia</th>
+            <th style="text-align:right;padding:6px 10px">Bajada</th>
+            <th style="text-align:right;padding:6px 10px">Subida</th>
+            <th style="text-align:right;padding:6px 10px">Pérdida</th>
+            <th style="text-align:right;padding:6px 10px">Obstrucción</th>
+            <th style="text-align:left;padding:6px 10px">Estado</th>
+          </tr>
+        </thead>
+        <tbody id="hist-table-body"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/satellite.js@6/dist/satellite.min.js"></script>

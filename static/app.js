@@ -63,6 +63,9 @@ function updateCards(latest) {
     (s.gps_ready ? `${s.gps_sats} sats` : 'no listo') + (s.gps_enabled ? '' : ' <small>(deshabilitado)</small>');
   document.getElementById('v-snr').textContent = s.is_snr_above_noise_floor == null
     ? '—' : (s.is_snr_above_noise_floor ? 'OK' : 'bajo');
+  document.getElementById('v-obstr-detail').innerHTML = (s.obstruction_duration == null)
+    ? '<small>sin datos</small>'
+    : `${s.obstruction_duration.toFixed(1)}s <small>cada ~${Math.round(s.obstruction_interval / 60)}min</small>`;
 
   const alertsBox = document.getElementById('alerts-box');
   const activeAlerts = Object.keys(latest.alerts || {});
@@ -300,3 +303,104 @@ document.getElementById('btn-geo-manual').addEventListener('click', () => {
   }
   startSkyTracking(lat, lon);
 });
+
+// Si config.json trae latitud/longitud, arrancamos el mapa de satélites solos
+// sin que el usuario tenga que tocar nada.
+(async function initFromConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    if (cfg.latitude != null && cfg.longitude != null) {
+      document.getElementById('sky-hint').textContent = 'Ubicación tomada de config.json.';
+      startSkyTracking(cfg.latitude, cfg.longitude);
+    }
+  } catch (e) { /* sin config.json - se usa el flujo manual normal */ }
+})();
+
+// ── Historial: rango + tabla + gráfico + export ─────────────────────────────
+function histRangeSeconds() {
+  const hours = parseFloat(document.getElementById('hist-range').value);
+  return hours * 3600;
+}
+
+function fmtFecha(ts) {
+  return new Date(ts * 1000).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+async function loadHistory() {
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - histRangeSeconds();
+  const res = await fetch(`/api/history?from=${from}&to=${now}`);
+  const data = await res.json();
+  const rows = data.rows || [];
+
+  document.getElementById('hist-count').textContent = `${rows.length} puntos`;
+
+  const tbody = document.getElementById('hist-table-body');
+  // Mas recientes primero en la tabla, hasta 500 filas para no colgar el navegador
+  tbody.innerHTML = rows.slice(-500).reverse().map(r => `
+    <tr style="border-top:1px solid var(--line)">
+      <td style="padding:5px 10px">${fmtFecha(r.ts)}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtMs(r.latency_ms)}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtMbps(r.down_bps)}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtMbps(r.up_bps)}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtPct(r.drop_rate)}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtPct(r.obstructed_fraction)}</td>
+      <td style="padding:5px 10px">${r.state || '—'}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="7" style="padding:10px;color:var(--muted)">Sin datos en este rango todavía.</td></tr>';
+
+  drawHistChart(rows);
+}
+
+function drawHistChart(rows) {
+  const canvas = document.getElementById('hist-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const pts = rows.filter(r => r.latency_ms != null);
+  if (pts.length < 2) {
+    ctx.fillStyle = '#9aa3af';
+    ctx.font = '12px system-ui';
+    ctx.fillText('Sin suficientes datos todavía para graficar.', 10, H / 2);
+    return;
+  }
+
+  function series(key, color) {
+    const vals = pts.map(p => p[key]).filter(v => v != null);
+    if (!vals.length) return;
+    const min = Math.min(...vals), max = Math.max(...vals) || 1;
+    const range = (max - min) || 1;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = (i / (pts.length - 1)) * (W - 20) + 10;
+      const norm = p[key] == null ? 0 : (p[key] - min) / range;
+      const y = H - 15 - norm * (H - 30);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  series('latency_ms', '#4a9eff');
+  series('down_bps', '#4ac97a');
+  series('obstructed_fraction', '#e0a934');
+
+  ctx.font = '11px system-ui';
+  ctx.fillStyle = '#4a9eff'; ctx.fillText('latencia', 10, 14);
+  ctx.fillStyle = '#4ac97a'; ctx.fillText('bajada', 70, 14);
+  ctx.fillStyle = '#e0a934'; ctx.fillText('obstrucción', 120, 14);
+}
+
+document.getElementById('btn-hist-refresh').addEventListener('click', loadHistory);
+document.getElementById('hist-range').addEventListener('change', loadHistory);
+document.getElementById('btn-hist-export').addEventListener('click', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - histRangeSeconds();
+  window.location.href = `/api/history/export?from=${from}&to=${now}`;
+});
+
+loadHistory();
+setInterval(loadHistory, 60000);
