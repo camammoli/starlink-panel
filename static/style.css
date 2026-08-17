@@ -1,0 +1,48 @@
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222c; --line:#2a2f3a;
+  --text:#e8eaed; --muted:#9aa3af; --accent:#4a9eff; --accent2:#2f5d4c;
+  --warn:#e0a934; --danger:#e05a4a; --ok:#4ac97a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;min-height:100%;background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+#app{max-width:1100px;margin:0 auto;padding:16px 18px 60px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:18px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;display:flex;align-items:center;gap:10px}
+header .sub{font-size:12px;color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  padding:4px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line)}
+.badge .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.badge.ok .dot{background:var(--ok)}
+.badge.warn .dot{background:var(--warn)}
+.badge.err .dot{background:var(--danger)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.card .v{font-size:22px;font-weight:600}
+.card .v small{font-size:12px;color:var(--muted);font-weight:400}
+
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+@media (max-width:800px){.panels{grid-template-columns:1fr}}
+
+.box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.box h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
+  margin:0 0 12px}
+
+canvas{display:block;max-width:100%}
+
+.sky-legend{display:flex;gap:16px;font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.sky-legend span{display:inline-flex;align-items:center;gap:5px}
+.sky-legend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+.alerts{margin-top:8px}
+.alert-item{font-size:12px;padding:6px 10px;border-radius:6px;background:rgba(224,90,74,.12);
+  color:#ff9a8c;margin-bottom:6px;border:1px solid rgba(224,90,74,.3)}
+.empty{color:var(--muted);font-size:12px}
+
+.hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer}
+button:hover{border-color:var(--accent)}

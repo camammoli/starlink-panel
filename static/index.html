@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Starlink Panel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🛰️ Starlink Panel <span class="badge" id="conn-badge"><span class="dot"></span><span id="conn-text">conectando…</span></span></h1>
+    <div class="sub" id="device-info">—</div>
+  </header>
+
+  <div class="grid">
+    <div class="card"><div class="k">Latencia</div><div class="v" id="v-latency">—</div></div>
+    <div class="card"><div class="k">Bajada</div><div class="v" id="v-down">—</div></div>
+    <div class="card"><div class="k">Subida</div><div class="v" id="v-up">—</div></div>
+    <div class="card"><div class="k">Pérdida de paquetes</div><div class="v" id="v-drop">—</div></div>
+    <div class="card"><div class="k">Obstrucción</div><div class="v" id="v-obstr">—</div></div>
+    <div class="card"><div class="k">Uptime</div><div class="v" id="v-uptime">—</div></div>
+    <div class="card"><div class="k">GPS</div><div class="v" id="v-gps">—</div></div>
+    <div class="card"><div class="k">SNR</div><div class="v" id="v-snr">—</div></div>
+  </div>
+
+  <div class="panels">
+    <div class="box">
+      <h2>Latencia y velocidad (últimos minutos)</h2>
+      <canvas id="chart" width="480" height="200"></canvas>
+    </div>
+    <div class="box">
+      <h2>Hacia dónde apunta el dish / satélites Starlink visibles</h2>
+      <canvas id="sky" width="360" height="360"></canvas>
+      <div class="sky-legend">
+        <span><i style="background:#4a9eff"></i> Dirección real del dish</span>
+        <span><i style="background:#e0a934"></i> Satélites Starlink sobre tu horizonte</span>
+      </div>
+      <div class="hint" id="sky-hint">Activá la ubicación para ver los satélites visibles ahora mismo (dato público de Celestrak, no depende de tu Starlink).</div>
+      <button id="btn-geo">Usar mi ubicación</button>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>Alertas activas</h2>
+    <div class="alerts" id="alerts-box"><div class="empty">Sin alertas.</div></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@6/dist/satellite.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

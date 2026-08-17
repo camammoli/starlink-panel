@@ -1,0 +1,14 @@
+[Unit]
+Description=Starlink Panel - dashboard local de estado del dish
+After=network.target
+
+[Service]
+Type=simple
+User=carlos
+WorkingDirectory=/home/carlos/starlink-panel
+ExecStart=/usr/bin/python3 /home/carlos/starlink-panel/starlink_panel.py --port 8850
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
