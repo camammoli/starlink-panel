@@ -144,15 +144,46 @@ function drawChart(history) {
 }
 
 // ── Sky plot: dirección real del dish + satélites Starlink visibles ─────────
-function drawSky(dishDir, satellites) {
+// Mapa de obstrucciones: grilla de SNR (0=obstruido, 1=libre, -1=sin datos)
+// tal como la arma el dish, en la MISMA proyección circular (centro=cenit,
+// borde del circulo=horizonte, norte arriba) que ya usa este mismo canvas
+// para el apuntado del dish y los satelites — se puede dibujar directo sin
+// convertir a azimut/elevacion, fila/columna ya son x/y de esa proyección.
+function drawObstructionMap(ctx, cx, cy, R, map) {
+  if (!map || !map.ok || !map.grid || !map.grid.length) return;
+  const rows = map.rows, cols = map.cols;
+  const cellW = (2 * R) / cols, cellH = (2 * R) / rows;
+  for (let i = 0; i < rows; i++) {
+    const py = (i / (rows - 1)) * 2 - 1;
+    const row = map.grid[i];
+    for (let j = 0; j < cols; j++) {
+      const v = row[j];
+      if (v < 0) continue; // sin datos en esa dirección todavía
+      const px = (j / (cols - 1)) * 2 - 1;
+      if (px * px + py * py > 1) continue; // fuera del círculo válido
+      const x = cx + px * R, y = cy + py * R;
+      // v=1 (libre) -> verde, v=0 (obstruido) -> rojo
+      const r = Math.round(224 * (1 - v) + 74 * v);
+      const g = Math.round(90 * (1 - v) + 201 * v);
+      const b = Math.round(74 * (1 - v) + 122 * v);
+      ctx.fillStyle = `rgba(${r},${g},${b},0.55)`;
+      ctx.fillRect(x - cellW / 2, y - cellH / 2, cellW + 0.5, cellH + 0.5);
+    }
+  }
+}
+
+function drawSky(dishDir, satellites, obstructionMap) {
   const canvas = document.getElementById('sky');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 16;
   ctx.clearRect(0, 0, W, H);
 
-  // Anillos de elevación (0/30/60/90) y marcas cardinales
-  ctx.strokeStyle = '#2a2f3a';
+  drawObstructionMap(ctx, cx, cy, R, obstructionMap);
+
+  // Anillos de elevación (0/30/60/90) y marcas cardinales — trazo mas claro
+  // que antes para que se sigan viendo por encima del mapa de obstrucciones
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
   ctx.fillStyle = '#9aa3af';
   ctx.font = '10px system-ui';
   [0, 30, 60].forEach(el => {
@@ -203,13 +234,25 @@ async function poll() {
     const data = await res.json();
     updateCards(data.latest);
     drawChart(data.history);
-    drawSky(window._dishDirection, window._visibleSats);
+    drawSky(window._dishDirection, window._visibleSats, window._obstructionMap);
   } catch (e) {
     // backend caido (raro, corre local) - reintenta en el proximo tick
   }
 }
 poll();
 setInterval(poll, 2500);
+
+// El mapa de obstrucciones cambia lento del lado del dish (el backend lo
+// actualiza cada 30s) — pedirlo con el mismo intervalo alcanza, no hace
+// falta bajar ~15000 celdas en cada poll de 2.5s.
+async function pollObstructionMap() {
+  try {
+    const res = await fetch('/api/obstruction-map');
+    window._obstructionMap = await res.json();
+  } catch (e) { /* se reintenta en el proximo tick */ }
+}
+pollObstructionMap();
+setInterval(pollObstructionMap, 30000);
 
 // ── Satélites Starlink visibles (TLE vía nuestro propio backend) ────────────
 // El backend (/api/tle) es el que le pega a Celestrak, UNA vez cada 2h,

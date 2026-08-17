@@ -400,7 +400,50 @@ class DishPoller:
             return {"latest": self.latest, "history": list(self.history)}
 
 
+class ObstructionMapCache:
+    """Consulta el mapa de obstrucciones (grilla de SNR por dirección, la
+    misma data que arma el mapa visual de la app oficial) cada `interval`
+    segundos en un hilo aparte. No hace falta consultarlo tan seguido como el
+    status (cambia lento — el dish tarda en acumular datos por dirección),
+    así que va separado del DishPoller para no cargar cada poll de 2.5s con
+    una grilla de ~15000 celdas."""
+
+    def __init__(self, target, interval=30):
+        self.target = target
+        self.interval = interval
+        self.lock = threading.Lock()
+        self.latest = {"ok": False, "error": "todavia no se consulto", "ts": time.time()}
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        ctx = starlink_grpc.ChannelContext(target=self.target)
+        while True:
+            try:
+                grid = starlink_grpc.obstruction_map(ctx)
+                rows = len(grid)
+                cols = len(grid[0]) if rows else 0
+                with self.lock:
+                    self.latest = {
+                        "ok": True,
+                        "rows": rows,
+                        "cols": cols,
+                        "grid": [list(r) for r in grid],
+                        "ts": time.time(),
+                    }
+            except Exception as e:
+                with self.lock:
+                    self.latest = {"ok": False, "error": str(e), "ts": time.time()}
+            time.sleep(self.interval)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.latest)
+
+
 poller: DishPoller = None  # type: ignore
+obstruction_cache: ObstructionMapCache = None  # type: ignore
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -423,6 +466,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/status":
             self._send_json(poller.snapshot())
+            return
+
+        if route == "/api/obstruction-map":
+            self._send_json(obstruction_cache.snapshot())
             return
 
         if route == "/api/tle":
@@ -496,15 +543,20 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global poller
+    global poller, obstruction_cache
     parser = argparse.ArgumentParser(description="Panel de estado de Starlink")
     parser.add_argument("--port", type=int, default=8850)
     parser.add_argument("--dish", default="192.168.100.1:9200", help="IP:puerto del dish")
     parser.add_argument("--interval", type=float, default=2.5, help="Segundos entre consultas al dish")
+    parser.add_argument("--obstruction-interval", type=float, default=30,
+                         help="Segundos entre consultas al mapa de obstrucciones")
     args = parser.parse_args()
 
     poller = DishPoller(args.dish, interval=args.interval)
     poller.start()
+
+    obstruction_cache = ObstructionMapCache(args.dish, interval=args.obstruction_interval)
+    obstruction_cache.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(f"Starlink Panel: http://0.0.0.0:{args.port}  (dish: {args.dish})")

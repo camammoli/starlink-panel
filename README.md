@@ -41,7 +41,7 @@ python3 starlink_panel.py --port 8850 --dish 192.168.100.1:9200 --interval 2.5
 - Uptime, satélites GPS en uso, calidad de señal (SNR)
 - Alertas activas del dish (recalentamiento, mástil desalineado, etc.)
 - Gráfico de latencia/velocidad de los últimos minutos
-- **Mapa del cielo**: hacia dónde apunta realmente el dish (dato real de telemetría) superpuesto con los satélites Starlink que están sobre tu horizonte en este momento (dato público de [Celestrak](https://celestrak.org), calculado con [satellite.js](https://github.com/shashwatak/satellite-js))
+- **Mapa del cielo**: hacia dónde apunta realmente el dish (dato real de telemetría) superpuesto con los satélites Starlink que están sobre tu horizonte en este momento (dato público de [Celestrak](https://celestrak.org), calculado con [satellite.js](https://github.com/shashwatak/satellite-js)) y de fondo el **mapa de obstrucciones real** (grilla de 123×123 de calidad de señal por dirección — misma data que arma el mapa de la app oficial de Starlink)
 - **Historial persistente**: tabla + gráfico navegables por rango (última hora / 6h / 24h / 7 días / 30 días) y exportable a CSV
 - **Alertas por Telegram** (opcionales): conexión caída/recuperada, obstrucción alta sostenida, alertas de hardware
 
