@@ -240,32 +240,67 @@ function computeVisible() {
     `${visible.length} satélites Starlink sobre tu horizonte ahora mismo.`;
 }
 
+let skyInterval = null;
+
+async function startSkyTracking(lat, lon) {
+  const hint = document.getElementById('sky-hint');
+  observerGd = {
+    longitude: lon * Math.PI / 180,
+    latitude: lat * Math.PI / 180,
+    height: 0.3, // km sobre el elipsoide, aproximado
+  };
+  hint.textContent = 'Descargando posiciones de satélites Starlink (Celestrak)…';
+  try {
+    const text = await loadTLEs();
+    const parsed = parseTLEs(text);
+    satrecs = parsed.map(s => ({ name: s.name, rec: satellite.twoline2satrec(s.l1, s.l2) }));
+    computeVisible();
+    if (skyInterval) clearInterval(skyInterval);
+    skyInterval = setInterval(computeVisible, 5000);
+  } catch (e) {
+    hint.textContent = 'No se pudo descargar la lista de satélites (Celestrak) — reintentá más tarde.';
+  }
+}
+
 async function enableSky() {
   const hint = document.getElementById('sky-hint');
+
+  // La Geolocation API requiere "contexto seguro" (HTTPS o localhost) — en
+  // HTTP normal (típico de un panel casero en la red local, ej. http://loli.lan)
+  // los navegadores la bloquean SIN mostrar ningún diálogo de permiso, lo que
+  // confunde porque parece "denegado" sin haberlo pedido nunca. En ese caso
+  // vamos directo al formulario manual en vez de intentar algo que va a fallar
+  // silenciosamente.
+  if (!window.isSecureContext) {
+    document.getElementById('manual-geo').style.display = 'block';
+    hint.textContent = 'Ingresá tu ubicación manualmente (ver el cuadro de abajo).';
+    return;
+  }
+
   if (!navigator.geolocation) {
     hint.textContent = 'Este navegador no soporta geolocalización.';
+    document.getElementById('manual-geo').style.display = 'block';
     return;
   }
   hint.textContent = 'Obteniendo tu ubicación…';
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    observerGd = {
-      longitude: pos.coords.longitude * Math.PI / 180,
-      latitude: pos.coords.latitude * Math.PI / 180,
-      height: 0.3, // km sobre el elipsoide, aproximado
-    };
-    hint.textContent = 'Descargando posiciones de satélites Starlink (Celestrak)…';
-    try {
-      const text = await loadTLEs();
-      const parsed = parseTLEs(text);
-      satrecs = parsed.map(s => ({ name: s.name, rec: satellite.twoline2satrec(s.l1, s.l2) }));
-      computeVisible();
-      setInterval(computeVisible, 5000);
-    } catch (e) {
-      hint.textContent = 'No se pudo descargar la lista de satélites (Celestrak) — reintentá más tarde.';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => startSkyTracking(pos.coords.latitude, pos.coords.longitude),
+    () => {
+      hint.textContent = 'No se pudo obtener tu ubicación (permiso denegado).';
+      document.getElementById('manual-geo').style.display = 'block';
     }
-  }, () => {
-    hint.textContent = 'No se pudo obtener tu ubicación (permiso denegado).';
-  });
+  );
 }
 
 document.getElementById('btn-geo').addEventListener('click', enableSky);
+
+document.getElementById('btn-geo-manual').addEventListener('click', () => {
+  const hint = document.getElementById('sky-hint');
+  const lat = parseFloat(document.getElementById('geo-lat').value);
+  const lon = parseFloat(document.getElementById('geo-lon').value);
+  if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    hint.textContent = 'Coordenadas inválidas — latitud entre -90 y 90, longitud entre -180 y 180.';
+    return;
+  }
+  startSkyTracking(lat, lon);
+});

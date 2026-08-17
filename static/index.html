@@ -38,6 +38,16 @@
       </div>
       <div class="hint" id="sky-hint">Activá la ubicación para ver los satélites visibles ahora mismo (dato público de Celestrak, no depende de tu Starlink).</div>
       <button id="btn-geo">Usar mi ubicación</button>
+      <div id="manual-geo" style="display:none;margin-top:10px">
+        <div class="hint" style="margin-top:0;margin-bottom:8px">
+          Tu navegador exige conexión segura (HTTPS) para compartir ubicación automáticamente, y este panel corre por HTTP en tu red local — ingresá las coordenadas a mano:
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="number" id="geo-lat" placeholder="Latitud" step="0.0001" style="width:110px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
+          <input type="number" id="geo-lon" placeholder="Longitud" step="0.0001" style="width:110px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
+          <button id="btn-geo-manual">Ver satélites</button>
+        </div>
+      </div>
     </div>
   </div>
 
