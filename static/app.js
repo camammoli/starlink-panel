@@ -305,13 +305,19 @@ document.getElementById('btn-geo-manual').addEventListener('click', () => {
 });
 
 // Si config.json trae latitud/longitud, arrancamos el mapa de satélites solos
-// sin que el usuario tenga que tocar nada.
+// y ocultamos el botón/formulario manual — no hacen falta si ya está
+// configurado. Si NO hay config.json (o no trae ubicación), se deja el botón
+// visible como respaldo — importante para quien clone el repo sin configurar
+// nada, ya que la geolocalización automática del navegador no funciona por
+// HTTP (ver fix anterior de isSecureContext).
 (async function initFromConfig() {
   try {
     const res = await fetch('/api/config');
     const cfg = await res.json();
     if (cfg.latitude != null && cfg.longitude != null) {
       document.getElementById('sky-hint').textContent = 'Ubicación tomada de config.json.';
+      document.getElementById('btn-geo').style.display = 'none';
+      document.getElementById('manual-geo').style.display = 'none';
       startSkyTracking(cfg.latitude, cfg.longitude);
     }
   } catch (e) { /* sin config.json - se usa el flujo manual normal */ }
