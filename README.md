@@ -82,7 +82,13 @@ Celestrak actualiza los datos de satélites Starlink cada 2 horas y aplica una p
 
 ## Versión
 
-**v0.1** — primera versión funcional, probada contra un dish Starlink Mini real (incluyendo historial, alertas y mapa de satélites con datos reales).
+**v0.1** — primera versión funcional, probada contra un dish Starlink Mini real (incluyendo historial, alertas, mapa de satélites y mapa de obstrucciones con datos reales).
+
+## Pendiente / ideas para más adelante
+
+- **Controles de escritura** (reiniciar el dish, guardarlo/"stow", resetear el mapa de obstrucciones, configurar horario de ahorro de energía) — la API local del dish los soporta, pero a propósito no están implementados todavía. Son acciones con impacto real (pueden cortar tu única conexión a internet un rato) y merecen una decisión aparte sobre cómo exponerlos con cuidado, no un botón suelto en el dashboard.
+- **"Modo nieve"** (Off/Automático/Pre-calentar en la app oficial) — investigado y confirmado que **no** está expuesto por la API local del dish, solo existe como configuración de cuenta/nube. No hay forma de agregarlo a este panel.
+- Solo probado contra un dish Starlink Mini real (el del autor) — la promesa de "cero configuración" para cualquier otro usuario depende de que todos los dishes usen la misma IP fija local, que es el comportamiento documentado y esperado, pero no verificado todavía con un segundo dispositivo.
 
 ## Deploy de referencia (uso personal del autor)
 
@@ -93,3 +99,7 @@ sudo systemctl status starlink-panel
 ```
 
 Archivo de servicio en `deploy/starlink-panel.service` (ejemplo, ajustar rutas/usuario).
+
+## License
+
+MIT — see [LICENSE](LICENSE)
