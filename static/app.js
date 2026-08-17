@@ -187,23 +187,19 @@ async function poll() {
 poll();
 setInterval(poll, 2500);
 
-// ── Satélites Starlink visibles (Celestrak TLE + satellite.js) ─────────────
-const TLE_CACHE_KEY = 'starlink_panel_tle_cache_v1';
-const TLE_MAX_AGE_MS = 2 * 60 * 60 * 1000; // Celestrak actualiza cada 2h, no pedir mas seguido
-
+// ── Satélites Starlink visibles (TLE vía nuestro propio backend) ────────────
+// El backend (/api/tle) es el que le pega a Celestrak, UNA vez cada 2h,
+// cacheado en el servidor — así todos los navegadores que abran este panel
+// comparten la misma descarga en vez de competir por la cuota de Celestrak
+// entre sí (ver comentario en starlink_panel.py). Acá solo consumimos.
 async function loadTLEs() {
-  try {
-    const cached = JSON.parse(localStorage.getItem(TLE_CACHE_KEY) || 'null');
-    if (cached && (Date.now() - cached.fetchedAt) < TLE_MAX_AGE_MS) {
-      return cached.text;
-    }
-  } catch (e) { /* cache corrupto, seguir a pedirlo de nuevo */ }
-
-  const res = await fetch('https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle');
-  if (!res.ok) throw new Error(`Celestrak respondió ${res.status}`);
-  const text = await res.text();
-  localStorage.setItem(TLE_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), text }));
-  return text;
+  const res = await fetch('/api/tle');
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'error desconocido');
+  if (data.stale) {
+    console.warn('TLE de Celestrak desactualizado, usando el último cache disponible:', data.warning);
+  }
+  return data.text;
 }
 
 function parseTLEs(text) {

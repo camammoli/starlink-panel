@@ -18,6 +18,8 @@ import argparse
 import json
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -25,6 +27,73 @@ import starlink_grpc
 
 STATIC_DIR = (Path(__file__).parent / "static").resolve()
 HISTORY_MAXLEN = 240  # a intervalo default de 2.5s, ~10 minutos de historial
+
+CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle"
+TLE_CACHE_FILE = Path(__file__).parent / "tle_cache.json"
+TLE_MAX_AGE_S = 2 * 60 * 60  # Celestrak actualiza cada 2h y aplica 1 descarga por ventana
+
+
+class TLECache:
+    """Descarga los TLE de satelites Starlink desde Celestrak UNA VEZ por
+    ventana de 2h, sin importar cuantos navegadores esten mirando el panel.
+
+    Celestrak aplica "una descarga por actualizacion" y esta politica parece
+    ser global por dataset (no por IP de cliente) - confirmado viendo el mismo
+    timestamp de "ultima descarga" desde dos redes distintas. Si cada
+    navegador de cada visitante pidiera el TLE por su cuenta (como en la v0.1
+    original), varios usuarios del mismo panel se bloquearian entre si. Cachear
+    aca, server-side, respeta la politica de verdad y sirve a todos los que
+    abran el panel desde el mismo dato ya bajado.
+
+    Se persiste en disco (tle_cache.json) para no perder el cache — y con eso
+    la ventana de 2h — si el servicio se reinicia.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.text = None
+        self.fetched_at = 0.0
+        self._load_from_disk()
+
+    def _load_from_disk(self):
+        try:
+            data = json.loads(TLE_CACHE_FILE.read_text())
+            self.text = data.get("text")
+            self.fetched_at = data.get("fetched_at", 0.0)
+        except Exception:
+            pass
+
+    def _save_to_disk(self):
+        try:
+            TLE_CACHE_FILE.write_text(json.dumps({"text": self.text, "fetched_at": self.fetched_at}))
+        except Exception:
+            pass
+
+    def get(self):
+        with self.lock:
+            age = time.time() - self.fetched_at
+            if self.text is not None and age < TLE_MAX_AGE_S:
+                return {"ok": True, "text": self.text, "age_s": age, "stale": False}
+            try:
+                req = urllib.request.Request(
+                    CELESTRAK_URL,
+                    headers={"User-Agent": "starlink-panel/0.1 (+https://github.com/camammoli/starlink-panel)"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    text = resp.read().decode("utf-8")
+                self.text = text
+                self.fetched_at = time.time()
+                self._save_to_disk()
+                return {"ok": True, "text": self.text, "age_s": 0, "stale": False}
+            except Exception as e:
+                if self.text is not None:
+                    # Celestrak no respondio (o nos bloqueo) - servimos el
+                    # cache viejo en vez de dejar al usuario sin nada.
+                    return {"ok": True, "text": self.text, "age_s": age, "stale": True, "warning": str(e)}
+                return {"ok": False, "error": str(e)}
+
+
+tle_cache = TLECache()
 
 
 class DishPoller:
@@ -92,6 +161,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?")[0] == "/api/status":
             self._send_json(poller.snapshot())
+            return
+
+        if self.path.split("?")[0] == "/api/tle":
+            self._send_json(tle_cache.get())
             return
 
         path = self.path.split("?")[0]
