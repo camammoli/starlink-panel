@@ -162,6 +162,7 @@ class WeatherCache:
                         "ok": True,
                         "ts": time.time(),
                         "cloud_cover": data.get("current", {}).get("cloud_cover"),
+                        "precipitation": data.get("current", {}).get("precipitation"),
                         "current_weather_code": data.get("current", {}).get("weather_code"),
                         "hourly_weather_code": data.get("hourly", {}).get("weather_code", []),
                     }
@@ -315,17 +316,19 @@ class HistoryStore:
                     state TEXT
                 )
             """)
-            # Migracion: agregar cloud_cover si la tabla ya existia de antes
+            # Migracion: agregar columnas nuevas si la tabla ya existia de antes
             # (CREATE TABLE IF NOT EXISTS no toca una tabla ya creada) — asi no
-            # se pierde el historial ya acumulado al agregar esta columna.
+            # se pierde el historial ya acumulado al agregar columnas.
             cols = [r[1] for r in conn.execute("PRAGMA table_info(samples)").fetchall()]
             if "cloud_cover" not in cols:
                 conn.execute("ALTER TABLE samples ADD COLUMN cloud_cover REAL")
+            if "precipitation" not in cols:
+                conn.execute("ALTER TABLE samples ADD COLUMN precipitation REAL")
 
     def _conn(self):
         return sqlite3.connect(DB_FILE)
 
-    def feed(self, sample, cloud_cover=None):
+    def feed(self, sample, cloud_cover=None, precipitation=None):
         if not sample.get("ok"):
             return
         status = sample["status"]
@@ -350,6 +353,7 @@ class HistoryStore:
                 "obstructed_fraction": status.get("fraction_obstructed"),
                 "state": status.get("state"),
                 "cloud_cover": cloud_cover,
+                "precipitation": precipitation,
             })
 
     def _flush(self, ts):
@@ -363,12 +367,12 @@ class HistoryStore:
         states = [b["state"] for b in self.bucket if b["state"]]
         state = max(set(states), key=states.count) if states else None
 
-        row = (int(ts), avg("latency_ms"), avg("down_bps"), avg("up_bps"), avg("drop_rate"), avg("obstructed_fraction"), state, avg("cloud_cover"))
+        row = (int(ts), avg("latency_ms"), avg("down_bps"), avg("up_bps"), avg("drop_rate"), avg("obstructed_fraction"), state, avg("cloud_cover"), avg("precipitation"))
         try:
             with self._conn() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO samples (ts, latency_ms, down_bps, up_bps, drop_rate, obstructed_fraction, state, cloud_cover) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO samples (ts, latency_ms, down_bps, up_bps, drop_rate, obstructed_fraction, state, cloud_cover, precipitation) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     row,
                 )
                 cutoff = int(ts - self.retention_days * 86400)
@@ -502,7 +506,12 @@ class DishPoller:
             except Exception as e:
                 print(f"AlertManager error: {e}")
             try:
-                history_store.feed(sample, cloud_cover=weather_cache.snapshot().get("cloud_cover"))
+                weather_snap = weather_cache.snapshot()
+                history_store.feed(
+                    sample,
+                    cloud_cover=weather_snap.get("cloud_cover"),
+                    precipitation=weather_snap.get("precipitation"),
+                )
             except Exception as e:
                 print(f"HistoryStore error: {e}")
 
@@ -614,10 +623,10 @@ class Handler(BaseHTTPRequestHandler):
             rows = history_store.query(ts_from, ts_to, limit=1000000)
             buf = io.StringIO()
             writer = csv.writer(buf)
-            writer.writerow(["ts", "fecha", "latency_ms", "down_bps", "up_bps", "drop_rate", "obstructed_fraction", "state", "cloud_cover"])
+            writer.writerow(["ts", "fecha", "latency_ms", "down_bps", "up_bps", "drop_rate", "obstructed_fraction", "state", "cloud_cover", "precipitation"])
             for r in rows:
                 fecha = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["ts"]))
-                writer.writerow([r["ts"], fecha, r["latency_ms"], r["down_bps"], r["up_bps"], r["drop_rate"], r["obstructed_fraction"], r["state"], r.get("cloud_cover")])
+                writer.writerow([r["ts"], fecha, r["latency_ms"], r["down_bps"], r["up_bps"], r["drop_rate"], r["obstructed_fraction"], r["state"], r.get("cloud_cover"), r.get("precipitation")])
             body = buf.getvalue().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")

@@ -42,7 +42,7 @@ python3 starlink_panel.py --port 8850 --dish 192.168.100.1:9200 --interval 2.5
 - Alertas activas del dish (recalentamiento, mástil desalineado, etc.)
 - Gráfico de latencia/velocidad de los últimos minutos
 - **Mapa del cielo**: hacia dónde apunta realmente el dish (dato real de telemetría) superpuesto con los satélites Starlink que están sobre tu horizonte en este momento (dato público de [Celestrak](https://celestrak.org), calculado con [satellite.js](https://github.com/shashwatak/satellite-js)) y de fondo el **mapa de obstrucciones real** (grilla de 123×123 de calidad de señal por dirección — misma data que arma el mapa de la app oficial de Starlink)
-- **Historial persistente**: tabla + gráfico navegables por rango (última hora / 6h / 24h / 7 días / 30 días) y exportable a CSV — incluye nubosidad (Open-Meteo) al lado de cada punto, para comparar visualmente clima y obstrucción
+- **Historial persistente**: tabla + gráfico navegables por rango (última hora / 6h / 24h / 7 días / 30 días) y exportable a CSV — incluye nubosidad y precipitación (Open-Meteo) al lado de cada punto, para comparar visualmente clima y obstrucción (la precipitación es el dato que más importa: es la causa física directa de la atenuación de señal por lluvia en banda Ku/Ka — la nubosidad sola puede ser engañosa, hay días 100% nublados sin una gota cayendo)
 - **Alertas por Telegram** (opcionales): conexión caída/recuperada, obstrucción alta sostenida, alertas de hardware, obstrucción en alza confirmada contra el pronóstico del tiempo
 
 ## Configuración (opcional)
