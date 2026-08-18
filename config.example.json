@@ -9,10 +9,16 @@
     "reconnect_notify": true,
     "obstruction_threshold": 0.15,
     "obstruction_sustained_s": 300,
-    "hardware_alerts": true
+    "hardware_alerts": true,
+    "weather_alert_enabled": true,
+    "weather_alert_obstruction_threshold": 0.10,
+    "weather_alert_forecast_hours": 2
   },
   "history": {
     "retention_days": 90,
     "resolution_s": 60
+  },
+  "weather": {
+    "poll_interval_s": 900
   }
 }

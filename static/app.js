@@ -423,8 +423,9 @@ async function loadHistory() {
       <td style="padding:5px 10px;text-align:right">${fmtPct(r.drop_rate)}</td>
       <td style="padding:5px 10px;text-align:right">${fmtPct(r.obstructed_fraction)}</td>
       <td style="padding:5px 10px">${r.state || '—'}</td>
+      <td style="padding:5px 10px;text-align:right">${r.cloud_cover != null ? r.cloud_cover.toFixed(0) + '%' : '—'}</td>
     </tr>
-  `).join('') || '<tr><td colspan="7" style="padding:10px;color:var(--muted)">Sin datos en este rango todavía.</td></tr>';
+  `).join('') || '<tr><td colspan="8" style="padding:10px;color:var(--muted)">Sin datos en este rango todavía.</td></tr>';
 
   drawHistChart(rows);
 }
@@ -463,10 +464,12 @@ function drawHistChart(rows) {
   series('latency_ms', '#4a9eff');
   series('down_bps', '#4ac97a');
   series('obstructed_fraction', '#e0a934');
+  series('cloud_cover', '#5ecfe0');
 
   ctx.font = '11px system-ui';
   ctx.fillStyle = '#4a9eff'; ctx.fillText('latencia', 10, 14);
   ctx.fillStyle = '#4ac97a'; ctx.fillText('bajada', 70, 14);
+  ctx.fillStyle = '#5ecfe0'; ctx.fillText('nubosidad', 240, 14);
   ctx.fillStyle = '#e0a934'; ctx.fillText('obstrucción', 120, 14);
 }
 

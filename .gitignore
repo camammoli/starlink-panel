@@ -5,3 +5,4 @@ venv/
 tle_cache.json
 config.json
 history.db
+*.bak_*

@@ -60,12 +60,24 @@ DEFAULT_CONFIG = {
         "obstruction_threshold": 0.15,   # fraccion (0.15 = 15%)
         "obstruction_sustained_s": 300,  # cuanto tiempo sostenido antes de avisar
         "hardware_alerts": True,         # thermal/mastil/agua/motor - siempre avisan si estan on
+        "weather_alert_enabled": True,
+        "weather_alert_obstruction_threshold": 0.10,  # cruzar esto dispara el chequeo de clima
+        "weather_alert_forecast_hours": 2,  # chequea la hora actual + estas siguientes
     },
     "history": {
         "retention_days": 90,
         "resolution_s": 60,  # cada cuanto se guarda un punto agregado en la DB
     },
+    "weather": {
+        "poll_interval_s": 900,  # 15 min - el pronostico de Open-Meteo no cambia mas seguido
+    },
 }
+
+# Codigos WMO (weather_code de Open-Meteo) que consideramos "tormenta" para la
+# alerta de clima: lluvia moderada/fuerte, chaparrones, tormenta electrica,
+# tormenta con granizo. No incluye llovizna liviana (51-55) a proposito, para
+# no generar falsos positivos con lluvia sin importancia.
+STORM_WEATHER_CODES = {61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99}
 
 
 def load_config():
@@ -103,6 +115,78 @@ def send_telegram(text):
         print(f"No se pudo enviar alerta a Telegram: {e}")
 
 
+# ── Clima (Open-Meteo, gratis, sin API key) ──────────────────────────────────
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+
+
+class WeatherCache:
+    """Consulta Open-Meteo para la ubicacion de config.json cada `interval`
+    segundos (el pronostico no cambia mas seguido que eso). Guarda la
+    nubosidad actual (para graficar junto a la obstruccion del dish) y los
+    weather_code de las proximas horas (para que AlertManager pueda chequear
+    si el pronostico confirma tormenta cuando la obstruccion empieza a subir).
+    Sin latitud/longitud en config.json, simplemente no arranca."""
+
+    def __init__(self, cfg, interval=900):
+        self.lat = cfg.get("latitude")
+        self.lon = cfg.get("longitude")
+        self.interval = interval
+        self.lock = threading.Lock()
+        self.latest = {"ok": False, "error": "todavia no se consulto"}
+
+    def start(self):
+        if self.lat is None or self.lon is None:
+            print("WeatherCache: sin latitud/longitud en config.json, no se consulta el clima")
+            return
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while True:
+            try:
+                params = urllib.parse.urlencode({
+                    "latitude": self.lat,
+                    "longitude": self.lon,
+                    "current": "cloud_cover,weather_code,precipitation",
+                    "hourly": "weather_code,precipitation_probability",
+                    "forecast_hours": 6,
+                    "timezone": "auto",
+                })
+                req = urllib.request.Request(
+                    f"{OPEN_METEO_URL}?{params}",
+                    headers={"User-Agent": "starlink-panel/0.1 (+https://github.com/camammoli/starlink-panel)"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                with self.lock:
+                    self.latest = {
+                        "ok": True,
+                        "ts": time.time(),
+                        "cloud_cover": data.get("current", {}).get("cloud_cover"),
+                        "current_weather_code": data.get("current", {}).get("weather_code"),
+                        "hourly_weather_code": data.get("hourly", {}).get("weather_code", []),
+                    }
+            except Exception as e:
+                with self.lock:
+                    self.latest = {"ok": False, "error": str(e), "ts": time.time()}
+            time.sleep(self.interval)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.latest)
+
+    def storm_in_forecast(self, hours_ahead):
+        """True si el codigo de clima actual o el de las proximas `hours_ahead`
+        horas esta en STORM_WEATHER_CODES."""
+        snap = self.snapshot()
+        if not snap.get("ok"):
+            return False
+        codes = []
+        if snap.get("current_weather_code") is not None:
+            codes.append(snap["current_weather_code"])
+        codes.extend(snap.get("hourly_weather_code", [])[:hours_ahead + 1])
+        return any(c in STORM_WEATHER_CODES for c in codes)
+
+
 # ── Alertas (estado + cooldown, para no repetir spam) ────────────────────────
 HARDWARE_ALERT_LABELS = {
     "alert_thermal_throttle": "El dish se está recalentando (throttle térmico)",
@@ -119,13 +203,15 @@ class AlertManager:
     aviso a Telegram. Todo con umbrales/tiempos sostenidos para no generar
     ruido (misma leccion aprendida con las alertas de Home Assistant)."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, weather_cache=None):
         self.cfg = cfg.get("alerts", {})
+        self.weather_cache = weather_cache
         self.was_connected = None
         self.disconnected_since = None
         self.disconnect_alerted = False
         self.obstructed_since = None
         self.obstruction_alerted = False
+        self.weather_alert_active = False
         self.hw_alert_state = {k: False for k in HARDWARE_ALERT_LABELS}
 
     def process(self, sample):
@@ -163,6 +249,25 @@ class AlertManager:
         else:
             self.obstructed_since = None
             self.obstruction_alerted = False
+
+        # Obstruccion en alza + pronostico confirma tormenta — chequeo aparte del
+        # de "obstruccion sostenida" de arriba: este dispara mas rapido (no
+        # espera un tiempo sostenido) porque el pronostico es la confirmacion,
+        # no el tiempo. Edge-triggered: un chequeo por cada vez que cruza el
+        # umbral, no uno por poll mientras se mantiene arriba.
+        if self.cfg.get("weather_alert_enabled", True) and self.weather_cache is not None:
+            w_threshold = self.cfg.get("weather_alert_obstruction_threshold", 0.10)
+            if frac >= w_threshold:
+                if not self.weather_alert_active:
+                    hours = self.cfg.get("weather_alert_forecast_hours", 2)
+                    if self.weather_cache.storm_in_forecast(hours):
+                        send_telegram(
+                            f"🌩️ Obstrucción del dish subiendo ({frac*100:.1f}%) y el pronóstico "
+                            f"marca tormenta/lluvia ahora o en las próximas {hours}h — posible causa climática."
+                        )
+                    self.weather_alert_active = True
+            else:
+                self.weather_alert_active = False
 
         # Alertas de hardware — avisar en el flanco (False -> True), no en cada poll
         if self.cfg.get("hardware_alerts", True):
@@ -210,11 +315,17 @@ class HistoryStore:
                     state TEXT
                 )
             """)
+            # Migracion: agregar cloud_cover si la tabla ya existia de antes
+            # (CREATE TABLE IF NOT EXISTS no toca una tabla ya creada) — asi no
+            # se pierde el historial ya acumulado al agregar esta columna.
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(samples)").fetchall()]
+            if "cloud_cover" not in cols:
+                conn.execute("ALTER TABLE samples ADD COLUMN cloud_cover REAL")
 
     def _conn(self):
         return sqlite3.connect(DB_FILE)
 
-    def feed(self, sample):
+    def feed(self, sample, cloud_cover=None):
         if not sample.get("ok"):
             return
         status = sample["status"]
@@ -238,6 +349,7 @@ class HistoryStore:
                 "drop_rate": status.get("pop_ping_drop_rate"),
                 "obstructed_fraction": status.get("fraction_obstructed"),
                 "state": status.get("state"),
+                "cloud_cover": cloud_cover,
             })
 
     def _flush(self, ts):
@@ -251,12 +363,12 @@ class HistoryStore:
         states = [b["state"] for b in self.bucket if b["state"]]
         state = max(set(states), key=states.count) if states else None
 
-        row = (int(ts), avg("latency_ms"), avg("down_bps"), avg("up_bps"), avg("drop_rate"), avg("obstructed_fraction"), state)
+        row = (int(ts), avg("latency_ms"), avg("down_bps"), avg("up_bps"), avg("drop_rate"), avg("obstructed_fraction"), state, avg("cloud_cover"))
         try:
             with self._conn() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO samples (ts, latency_ms, down_bps, up_bps, drop_rate, obstructed_fraction, state) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO samples (ts, latency_ms, down_bps, up_bps, drop_rate, obstructed_fraction, state, cloud_cover) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     row,
                 )
                 cutoff = int(ts - self.retention_days * 86400)
@@ -334,7 +446,8 @@ class TLECache:
 
 
 tle_cache = TLECache()
-alert_manager = AlertManager(CONFIG)
+weather_cache = WeatherCache(CONFIG, interval=CONFIG["weather"]["poll_interval_s"])
+alert_manager = AlertManager(CONFIG, weather_cache=weather_cache)
 history_store = HistoryStore(
     resolution_s=CONFIG["history"]["resolution_s"],
     retention_days=CONFIG["history"]["retention_days"],
@@ -389,7 +502,7 @@ class DishPoller:
             except Exception as e:
                 print(f"AlertManager error: {e}")
             try:
-                history_store.feed(sample)
+                history_store.feed(sample, cloud_cover=weather_cache.snapshot().get("cloud_cover"))
             except Exception as e:
                 print(f"HistoryStore error: {e}")
 
@@ -501,10 +614,10 @@ class Handler(BaseHTTPRequestHandler):
             rows = history_store.query(ts_from, ts_to, limit=1000000)
             buf = io.StringIO()
             writer = csv.writer(buf)
-            writer.writerow(["ts", "fecha", "latency_ms", "down_bps", "up_bps", "drop_rate", "obstructed_fraction", "state"])
+            writer.writerow(["ts", "fecha", "latency_ms", "down_bps", "up_bps", "drop_rate", "obstructed_fraction", "state", "cloud_cover"])
             for r in rows:
                 fecha = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["ts"]))
-                writer.writerow([r["ts"], fecha, r["latency_ms"], r["down_bps"], r["up_bps"], r["drop_rate"], r["obstructed_fraction"], r["state"]])
+                writer.writerow([r["ts"], fecha, r["latency_ms"], r["down_bps"], r["up_bps"], r["drop_rate"], r["obstructed_fraction"], r["state"], r.get("cloud_cover")])
             body = buf.getvalue().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
@@ -557,6 +670,8 @@ def main():
 
     obstruction_cache = ObstructionMapCache(args.dish, interval=args.obstruction_interval)
     obstruction_cache.start()
+
+    weather_cache.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(f"Starlink Panel: http://0.0.0.0:{args.port}  (dish: {args.dish})")

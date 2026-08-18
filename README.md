@@ -42,8 +42,8 @@ python3 starlink_panel.py --port 8850 --dish 192.168.100.1:9200 --interval 2.5
 - Alertas activas del dish (recalentamiento, mástil desalineado, etc.)
 - Gráfico de latencia/velocidad de los últimos minutos
 - **Mapa del cielo**: hacia dónde apunta realmente el dish (dato real de telemetría) superpuesto con los satélites Starlink que están sobre tu horizonte en este momento (dato público de [Celestrak](https://celestrak.org), calculado con [satellite.js](https://github.com/shashwatak/satellite-js)) y de fondo el **mapa de obstrucciones real** (grilla de 123×123 de calidad de señal por dirección — misma data que arma el mapa de la app oficial de Starlink)
-- **Historial persistente**: tabla + gráfico navegables por rango (última hora / 6h / 24h / 7 días / 30 días) y exportable a CSV
-- **Alertas por Telegram** (opcionales): conexión caída/recuperada, obstrucción alta sostenida, alertas de hardware
+- **Historial persistente**: tabla + gráfico navegables por rango (última hora / 6h / 24h / 7 días / 30 días) y exportable a CSV — incluye nubosidad (Open-Meteo) al lado de cada punto, para comparar visualmente clima y obstrucción
+- **Alertas por Telegram** (opcionales): conexión caída/recuperada, obstrucción alta sostenida, alertas de hardware, obstrucción en alza confirmada contra el pronóstico del tiempo
 
 ## Configuración (opcional)
 
@@ -60,6 +60,7 @@ cp config.example.json config.json
 | `alerts.*` | Umbrales y tiempos sostenidos antes de avisar — pensado para no generar ruido (ver detalle abajo). |
 | `history.resolution_s` | Cada cuántos segundos se guarda un punto agregado en el historial (default 60s = 1 punto por minuto). |
 | `history.retention_days` | Cuántos días de historial se conservan antes de borrarse solo (default 90). |
+| `weather.poll_interval_s` | Cada cuánto se consulta Open-Meteo (default 900s = 15 min — el pronóstico no cambia más seguido). Solo corre si hay `latitude`/`longitude` configurados. |
 
 ### Alertas por Telegram
 
@@ -67,13 +68,14 @@ Pensadas para avisar solo lo que realmente importa, con tiempos sostenidos para 
 
 - 🔴 **Desconectado** / 🟢 **Reconectado** (con cuánto duró la caída) — recién después de `disconnect_after_s` segundos seguido sin `CONNECTED`, no en el primer poll.
 - 🟡 **Obstrucción alta sostenida** — solo si `fraction_obstructed` supera `obstruction_threshold` durante `obstruction_sustained_s` segundos seguidos, no por un pico de un instante.
+- 🌩️ **Obstrucción en alza + pronóstico confirma tormenta** — si `fraction_obstructed` cruza `weather_alert_obstruction_threshold` (más bajo y más rápido que la alerta anterior, no espera tiempo sostenido) y el pronóstico de Open-Meteo marca lluvia/tormenta/granizo ahora o en las próximas `weather_alert_forecast_hours` horas. Nace de una observación real: en banda Ku/Ka la lluvia y sobre todo el granizo atenúan la señal (rain fade) y el dish puede reportarlo como obstrucción — este chequeo cruza ambas señales para avisar con mejor contexto, sin repetir mientras la obstrucción se mantiene arriba del umbral.
 - ⚠️ **Alertas de hardware** (recalentamiento, mástil desalineado, motores trabados, agua detectada) — avisan una vez al activarse, no se repiten mientras siguen activas.
 
 No hay alertas por latencia/velocidad puntual — generaría demasiado ruido para el valor que aporta.
 
 ## Arquitectura
 
-- **Backend** (`starlink_panel.py`): un solo archivo Python, sin frameworks — `http.server` + `sqlite3` de la librería estándar, y [`starlink-grpc-core`](https://pypi.org/project/starlink-grpc-core/) (paquete de la comunidad que expone `starlink_grpc.py` del proyecto [sparky8512/starlink-grpc-tools](https://github.com/sparky8512/starlink-grpc-tools)) para hablarle al dish. Un hilo de fondo consulta el dish cada `--interval` segundos, actualiza el estado en memoria, alimenta el historial (SQLite, `history.db`, gitignored) y evalúa las alertas. El frontend solo hace polling HTTP normal a `/api/status`, `/api/history`, etc. — nunca gRPC directo.
+- **Backend** (`starlink_panel.py`): un solo archivo Python, sin frameworks — `http.server` + `sqlite3` de la librería estándar, y [`starlink-grpc-core`](https://pypi.org/project/starlink-grpc-core/) (paquete de la comunidad que expone `starlink_grpc.py` del proyecto [sparky8512/starlink-grpc-tools](https://github.com/sparky8512/starlink-grpc-tools)) para hablarle al dish. Un hilo de fondo consulta el dish cada `--interval` segundos, actualiza el estado en memoria, alimenta el historial (SQLite, `history.db`, gitignored) y evalúa las alertas. Otro hilo aparte consulta [Open-Meteo](https://open-meteo.com/) (gratis, sin API key) cada `weather.poll_interval_s` segundos para la nubosidad/pronóstico. El frontend solo hace polling HTTP normal a `/api/status`, `/api/history`, etc. — nunca gRPC directo.
 - **Frontend** (`static/`): HTML/CSS/JS vanilla, sin build, sin dependencias propias (solo `satellite.js` vía CDN para el mapa del cielo, que se degrada solo si no hay internet — el resto del panel no depende de conexión a internet, solo de la red local).
 
 ## Nota sobre Celestrak
