@@ -501,6 +501,19 @@ function drawHistChart(rows) {
 
 document.getElementById('btn-hist-refresh').addEventListener('click', loadHistory);
 document.getElementById('hist-range').addEventListener('change', loadHistory);
+
+// Vista detallada (mín/prom/máx en las tarjetas): on/off, recordado entre visitas.
+(function initDetalle() {
+  const DETALLE_KEY = 'starlink_detalle_v1';
+  const chk = document.getElementById('chk-detalle');
+  const activo = localStorage.getItem(DETALLE_KEY) === '1';
+  chk.checked = activo;
+  document.getElementById('app').classList.toggle('detalle-on', activo);
+  chk.addEventListener('change', () => {
+    document.getElementById('app').classList.toggle('detalle-on', chk.checked);
+    localStorage.setItem(DETALLE_KEY, chk.checked ? '1' : '0');
+  });
+})();
 document.getElementById('btn-hist-export').addEventListener('click', () => {
   const now = Math.floor(Date.now() / 1000);
   const from = now - histRangeSeconds();
