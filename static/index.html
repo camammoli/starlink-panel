@@ -13,12 +13,24 @@
     <div class="sub" id="device-info">—</div>
   </header>
 
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+    <span class="hint" style="margin-top:0">Rango del resumen e historial:</span>
+    <select id="hist-range" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
+      <option value="1">Última hora</option>
+      <option value="6">Últimas 6 horas</option>
+      <option value="24" selected>Últimas 24 horas</option>
+      <option value="168">Últimos 7 días</option>
+      <option value="720">Últimos 30 días</option>
+    </select>
+    <button id="btn-hist-refresh">Actualizar</button>
+  </div>
+
   <div class="grid">
-    <div class="card"><div class="k">Latencia</div><div class="v" id="v-latency">—</div></div>
-    <div class="card"><div class="k">Bajada</div><div class="v" id="v-down">—</div></div>
-    <div class="card"><div class="k">Subida</div><div class="v" id="v-up">—</div></div>
-    <div class="card"><div class="k">Pérdida de paquetes</div><div class="v" id="v-drop">—</div></div>
-    <div class="card"><div class="k">Obstrucción</div><div class="v" id="v-obstr">—</div></div>
+    <div class="card"><div class="k">Latencia</div><div class="v" id="v-latency">—</div><div class="range" id="r-latency">—</div></div>
+    <div class="card"><div class="k">Bajada</div><div class="v" id="v-down">—</div><div class="range" id="r-down">—</div></div>
+    <div class="card"><div class="k">Subida</div><div class="v" id="v-up">—</div><div class="range" id="r-up">—</div></div>
+    <div class="card"><div class="k">Pérdida de paquetes</div><div class="v" id="v-drop">—</div><div class="range" id="r-drop">—</div></div>
+    <div class="card"><div class="k">Obstrucción</div><div class="v" id="v-obstr">—</div><div class="range" id="r-obstr">—</div></div>
     <div class="card"><div class="k">Uptime</div><div class="v" id="v-uptime">—</div></div>
     <div class="card"><div class="k">GPS</div><div class="v" id="v-gps">—</div></div>
     <div class="card"><div class="k">SNR</div><div class="v" id="v-snr">—</div></div>
@@ -62,14 +74,6 @@
   <div class="box" style="margin-top:16px">
     <h2>Historial</h2>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-      <select id="hist-range" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
-        <option value="1">Última hora</option>
-        <option value="6">Últimas 6 horas</option>
-        <option value="24" selected>Últimas 24 horas</option>
-        <option value="168">Últimos 7 días</option>
-        <option value="720">Últimos 30 días</option>
-      </select>
-      <button id="btn-hist-refresh">Actualizar</button>
       <button id="btn-hist-export">Exportar CSV</button>
       <span class="hint" id="hist-count" style="margin-top:0"></span>
     </div>

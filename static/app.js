@@ -11,6 +11,11 @@ function fmtPct(frac) {
   if (frac == null) return '—';
   return `${(frac * 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })}%`;
 }
+function statsMinAvgMax(vals) {
+  const v = vals.filter(x => x != null);
+  if (!v.length) return null;
+  return { min: Math.min(...v), avg: v.reduce((a, b) => a + b, 0) / v.length, max: Math.max(...v) };
+}
 function fmtUptime(s) {
   if (s == null) return '—';
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
@@ -397,6 +402,23 @@ function fmtFecha(ts) {
   return new Date(ts * 1000).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+// Mín/prom/máx del rango elegido, para las 5 tarjetas de arriba que tienen
+// serie histórica guardada (SNR/GPS/uptime no se persisten en history.db).
+function renderRangeSummary(rows) {
+  const campos = [
+    { id: 'r-latency', key: 'latency_ms', fmt: fmtMs },
+    { id: 'r-down', key: 'down_bps', fmt: fmtMbps },
+    { id: 'r-up', key: 'up_bps', fmt: fmtMbps },
+    { id: 'r-drop', key: 'drop_rate', fmt: fmtPct },
+    { id: 'r-obstr', key: 'obstructed_fraction', fmt: fmtPct },
+  ];
+  campos.forEach(({ id, key, fmt }) => {
+    const el = document.getElementById(id);
+    const s = statsMinAvgMax(rows.map(r => r[key]));
+    el.textContent = s ? `mín ${fmt(s.min)} · prom ${fmt(s.avg)} · máx ${fmt(s.max)}` : 'sin datos en el rango';
+  });
+}
+
 async function loadHistory() {
   const now = Math.floor(Date.now() / 1000);
   const from = now - histRangeSeconds();
@@ -411,6 +433,7 @@ async function loadHistory() {
   }
 
   document.getElementById('hist-count').textContent = `${rows.length} puntos`;
+  renderRangeSummary(rows);
 
   const tbody = document.getElementById('hist-table-body');
   // Mas recientes primero en la tabla, hasta 500 filas para no colgar el navegador
