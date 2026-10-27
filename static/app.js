@@ -232,12 +232,36 @@ function drawSky(dishDir, satellites, obstructionMap) {
   }
 }
 
+// ── Servicio (cuenta/internet), aparte del estado de conexion al satelite ──
+// El dish puede figurar "Conectado" con el servicio suspendido (paso el 6/9/2026
+// por un pago rechazado): por eso es una tarjeta propia.
+function updateService(svc) {
+  const v = document.getElementById('v-service');
+  const d = document.getElementById('d-service');
+  if (!v) return;
+  if (!svc || (svc.disablement_code == null && svc.internet_ok == null)) {
+    v.textContent = '—'; v.style.color = ''; d.textContent = 'verificando…';
+    return;
+  }
+  if (svc.problem) {
+    const suspendido = svc.disablement_code && !['OKAY', 'UNKNOWN_STATE'].includes(svc.disablement_code);
+    v.textContent = suspendido ? 'Suspendido' : 'Sin internet';
+    v.style.color = suspendido ? 'var(--danger)' : 'var(--warn)';
+    d.textContent = svc.problem;
+    return;
+  }
+  v.textContent = 'Activo';
+  v.style.color = 'var(--ok)';
+  d.textContent = svc.internet_ok === false ? 'sin salida a internet' : 'cuenta e internet OK';
+}
+
 // ── Polling del backend ──────────────────────────────────────────────────────
 async function poll() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
     updateCards(data.latest);
+    updateService(data.service);
     drawChart(data.history);
     drawSky(window._dishDirection, window._visibleSats, window._obstructionMap);
   } catch (e) {

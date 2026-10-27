@@ -25,6 +25,7 @@ import copy
 import csv
 import io
 import json
+import socket
 import sqlite3
 import threading
 import time
@@ -63,6 +64,15 @@ DEFAULT_CONFIG = {
         "weather_alert_enabled": True,
         "weather_alert_obstruction_threshold": 0.10,  # cruzar esto dispara el chequeo de clima
         "weather_alert_forecast_hours": 2,  # chequea la hora actual + estas siguientes
+        # Servicio caido aunque el dish siga "CONNECTED" al satelite: cuenta
+        # suspendida (pago rechazado), plan sin datos, o sin salida a internet.
+        "service_alert_enabled": True,
+        "service_alert_after_s": 300,     # cuanto tiempo sostenido antes de avisar
+        "service_check_interval_s": 30,   # cada cuanto se lee disablement_code del dish
+        "internet_check_interval_s": 60,  # cada cuanto se prueba la salida a internet
+        "internet_check_hosts": ["1.1.1.1:443", "8.8.8.8:53"],  # alcanza con que responda uno
+        "internet_check_timeout_s": 5,
+        "telegram_queue_max": 50,         # avisos guardados mientras no hay internet
     },
     "history": {
         "retention_days": 90,
@@ -100,10 +110,12 @@ CONFIG = load_config()
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 def send_telegram(text):
+    """Devuelve True si Telegram acepto el mensaje (o si no hay Telegram
+    configurado: no hay nada que reintentar), False si fallo el envio."""
     token = CONFIG.get("telegram_bot_token")
     chat_id = CONFIG.get("telegram_chat_id")
     if not token or not chat_id:
-        return
+        return True
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         # Sin parse_mode: si el texto tiene caracteres especiales de Markdown,
@@ -111,8 +123,46 @@ def send_telegram(text):
         data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
         req = urllib.request.Request(url, data=data)
         urllib.request.urlopen(req, timeout=10).read()
+        return True
     except Exception as e:
         print(f"No se pudo enviar alerta a Telegram: {e}")
+        return False
+
+
+class TelegramQueue:
+    """Los avisos que no se pueden mandar (justo los importantes: sin
+    internet no hay Telegram) quedan en cola y se reintentan en cada flush(),
+    en orden, marcados con la hora en que se generaron. La cola tiene tope
+    para no crecer sin limite en un corte largo: se descartan los mas viejos."""
+
+    def __init__(self, max_len=50):
+        self.max_len = max_len
+        self.pending = []  # [(ts_generado, texto)]
+        self.lock = threading.Lock()
+
+    def notify(self, text, now=None):
+        now = time.time() if now is None else now
+        with self.lock:
+            if not self.pending and send_telegram(text):
+                return
+            self.pending.append((now, text))
+            if len(self.pending) > self.max_len:
+                self.pending = self.pending[-self.max_len:]
+
+    def flush(self, now=None):
+        now = time.time() if now is None else now
+        with self.lock:
+            while self.pending:
+                ts, text = self.pending[0]
+                if now - ts > 120:  # solo se marca si de verdad llega tarde
+                    hora = time.strftime("%d/%m %H:%M", time.localtime(ts))
+                    text = f"⏳ Aviso demorado (de las {hora}):\n{text}"
+                if not send_telegram(text):
+                    return
+                self.pending.pop(0)
+
+
+telegram_queue = TelegramQueue(max_len=CONFIG["alerts"].get("telegram_queue_max", 50))
 
 
 # ── Clima (Open-Meteo, gratis, sin API key) ──────────────────────────────────
@@ -214,6 +264,39 @@ class AlertManager:
         self.obstruction_alerted = False
         self.weather_alert_active = False
         self.hw_alert_state = {k: False for k in HARDWARE_ALERT_LABELS}
+        self.service_problem_since = None
+        self.service_problem_reason = None
+        self.service_alerted = False
+
+    def process_service(self, service, connected, now):
+        """Servicio caido con el dish enganchado al satelite. Es lo que paso
+        el 6/9/2026: cuenta suspendida por pago rechazado, el dish seguia
+        "CONNECTED" y la alerta de desconexion no se entero. Dos senales:
+        disablement_code del dish (directa) y una prueba de salida a internet
+        (respaldo, por si el codigo no cambia). El aviso de inicio casi nunca
+        sale en el momento (sin internet no hay Telegram): queda en la cola y
+        llega junto con el de "restablecido", con las horas reales."""
+        if not self.cfg.get("service_alert_enabled", True):
+            return
+        reason = service_problem(service, connected)
+        if reason:
+            if self.service_problem_since is None:
+                self.service_problem_since = now
+                self.service_problem_reason = reason
+            elif not self.service_alerted and (now - self.service_problem_since) >= self.cfg.get("service_alert_after_s", 300):
+                desde = time.strftime("%d/%m %H:%M", time.localtime(self.service_problem_since))
+                telegram_queue.notify(f"🟠 Starlink sin servicio desde las {desde}: {self.service_problem_reason}.", now=now)
+                self.service_alerted = True
+        else:
+            if self.service_alerted:
+                desde = time.strftime("%d/%m %H:%M", time.localtime(self.service_problem_since))
+                hasta = time.strftime("%d/%m %H:%M", time.localtime(now))
+                telegram_queue.notify(
+                    f"🟢 Servicio de Starlink restablecido. Estuvo sin servicio {fmt_duration(now - self.service_problem_since)} "
+                    f"({desde} a {hasta}): {self.service_problem_reason}.", now=now)
+            self.service_problem_since = None
+            self.service_problem_reason = None
+            self.service_alerted = False
 
     def process(self, sample):
         if not self.cfg.get("enabled", True):
@@ -228,14 +311,14 @@ class AlertManager:
         if connected:
             if self.disconnect_alerted and self.cfg.get("reconnect_notify", True):
                 down_for = now - self.disconnected_since
-                send_telegram(f"🟢 Starlink reconectado (estuvo caído {fmt_duration(down_for)}).")
+                telegram_queue.notify(f"🟢 Starlink reconectado (estuvo caído {fmt_duration(down_for)}).")
             self.disconnected_since = None
             self.disconnect_alerted = False
         else:
             if self.disconnected_since is None:
                 self.disconnected_since = now
             elif not self.disconnect_alerted and (now - self.disconnected_since) >= self.cfg.get("disconnect_after_s", 120):
-                send_telegram(f"🔴 Starlink desconectado (estado: {status.get('state')}).")
+                telegram_queue.notify(f"🔴 Starlink desconectado (estado: {status.get('state')}).")
                 self.disconnect_alerted = True
 
         # Obstruccion sostenida
@@ -245,7 +328,7 @@ class AlertManager:
             if self.obstructed_since is None:
                 self.obstructed_since = now
             elif not self.obstruction_alerted and (now - self.obstructed_since) >= self.cfg.get("obstruction_sustained_s", 300):
-                send_telegram(f"🟡 Obstrucción alta y sostenida en el dish: {frac*100:.1f}%.")
+                telegram_queue.notify(f"🟡 Obstrucción alta y sostenida en el dish: {frac*100:.1f}%.")
                 self.obstruction_alerted = True
         else:
             self.obstructed_since = None
@@ -262,7 +345,7 @@ class AlertManager:
                 if not self.weather_alert_active:
                     hours = self.cfg.get("weather_alert_forecast_hours", 2)
                     if self.weather_cache.storm_in_forecast(hours):
-                        send_telegram(
+                        telegram_queue.notify(
                             f"🌩️ Obstrucción del dish subiendo ({frac*100:.1f}%) y el pronóstico "
                             f"marca tormenta/lluvia ahora o en las próximas {hours}h — posible causa climática."
                         )
@@ -276,8 +359,94 @@ class AlertManager:
             for key, label in HARDWARE_ALERT_LABELS.items():
                 now_on = bool(active.get(key))
                 if now_on and not self.hw_alert_state[key]:
-                    send_telegram(f"⚠️ {label}.")
+                    telegram_queue.notify(f"⚠️ {label}.")
                 self.hw_alert_state[key] = now_on
+
+
+# disablement_code del dish (proto UserTerminalDisablementCode). OKAY = normal.
+DISABLEMENT_LABELS = {
+    "NO_ACTIVE_ACCOUNT": "cuenta sin servicio activo (¿suspensión por pago rechazado?)",
+    "ACCOUNT_DISABLED": "cuenta deshabilitada",
+    "DATA_OVERAGE_SANDBOX_POLICY": "se agotaron los datos del plan",
+    "TOO_FAR_FROM_SERVICE_ADDRESS": "el dish está lejos de la dirección registrada",
+    "OUTSIDE_HOME_REGION": "fuera de la región del plan",
+    "ROAM_RESTRICTED": "roaming no permitido por el plan",
+    "BLOCKED_COUNTRY": "país bloqueado",
+    "BLOCKED_AREA": "zona bloqueada",
+    "CELL_IS_DISABLED": "la celda de servicio está deshabilitada",
+    "UNSUPPORTED_VERSION": "software del dish no soportado",
+    "UNKNOWN_LOCATION": "ubicación desconocida",
+}
+
+
+def service_problem(service, connected):
+    """Motivo (texto) si el servicio esta caido; None si esta bien o no se sabe."""
+    if not service:
+        return None
+    code = service.get("disablement_code")
+    if code and code not in ("OKAY", "UNKNOWN_STATE"):
+        return f"{DISABLEMENT_LABELS.get(code, 'servicio deshabilitado por Starlink')} [{code}]"
+    if connected and service.get("internet_ok") is False:
+        return "el dish está conectado al satélite pero no hay salida a internet"
+    return None
+
+
+def internet_reachable(hosts, timeout):
+    """True si alguno de los host:puerto acepta una conexion TCP."""
+    for hp in hosts:
+        host, _, port = hp.rpartition(":")
+        try:
+            with socket.create_connection((host, int(port)), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+class ServiceMonitor:
+    """Lee disablement_code del dish (no viene en status_data(), hay que pedir
+    el status crudo) y prueba la salida a internet, cada uno con su propio
+    intervalo, en un hilo aparte para no demorar el poll de 2.5s."""
+
+    def __init__(self, target, cfg):
+        self.target = target
+        self.cfg = cfg.get("alerts", {})
+        self.lock = threading.Lock()
+        self.latest = {"disablement_code": None, "internet_ok": None, "ts": None, "internet_ts": None}
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        ctx = starlink_grpc.ChannelContext(target=self.target)
+        code_every = self.cfg.get("service_check_interval_s", 30)
+        net_every = self.cfg.get("internet_check_interval_s", 60)
+        last_code = last_net = 0.0
+        while True:
+            now = time.time()
+            if now - last_code >= code_every:
+                last_code = now
+                try:
+                    st = starlink_grpc.get_status(ctx)
+                    enum = st.DESCRIPTOR.fields_by_name["disablement_code"].enum_type
+                    code = enum.values_by_number[st.disablement_code].name
+                except Exception:
+                    code = None  # dish inalcanzable: eso lo cubre la alerta de desconexion
+                with self.lock:
+                    self.latest["disablement_code"] = code
+                    self.latest["ts"] = now
+            if now - last_net >= net_every:
+                last_net = now
+                ok = internet_reachable(self.cfg.get("internet_check_hosts", ["1.1.1.1:443", "8.8.8.8:53"]),
+                                        self.cfg.get("internet_check_timeout_s", 5))
+                with self.lock:
+                    self.latest["internet_ok"] = ok
+                    self.latest["internet_ts"] = now
+            time.sleep(5)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.latest)
 
 
 def fmt_duration(seconds):
@@ -469,6 +638,7 @@ class DishPoller:
         self.lock = threading.Lock()
         self.latest = {"ok": False, "error": "todavia no se consulto", "ts": time.time()}
         self.history = []
+        self.last_flush = 0.0
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -503,6 +673,12 @@ class DishPoller:
 
             try:
                 alert_manager.process(sample)
+                if service_monitor is not None:
+                    connected = bool(sample.get("ok")) and sample["status"].get("state") == "CONNECTED"
+                    alert_manager.process_service(service_monitor.snapshot(), connected, sample["ts"])
+                if telegram_queue.pending and sample["ts"] - self.last_flush >= 30:
+                    self.last_flush = sample["ts"]
+                    telegram_queue.flush(sample["ts"])
             except Exception as e:
                 print(f"AlertManager error: {e}")
             try:
@@ -566,6 +742,7 @@ class ObstructionMapCache:
 
 poller: DishPoller = None  # type: ignore
 obstruction_cache: ObstructionMapCache = None  # type: ignore
+service_monitor: ServiceMonitor = None  # type: ignore
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -587,7 +764,13 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?")[0]
 
         if route == "/api/status":
-            self._send_json(poller.snapshot())
+            data = poller.snapshot()
+            svc = service_monitor.snapshot()
+            latest = data["latest"]
+            connected = bool(latest.get("ok")) and latest["status"].get("state") == "CONNECTED"
+            svc["problem"] = service_problem(svc, connected)
+            data["service"] = svc
+            self._send_json(data)
             return
 
         if route == "/api/obstruction-map":
@@ -665,7 +848,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global poller, obstruction_cache
+    global poller, obstruction_cache, service_monitor
     parser = argparse.ArgumentParser(description="Panel de estado de Starlink")
     parser.add_argument("--port", type=int, default=8850)
     parser.add_argument("--dish", default="192.168.100.1:9200", help="IP:puerto del dish")
@@ -673,6 +856,9 @@ def main():
     parser.add_argument("--obstruction-interval", type=float, default=30,
                          help="Segundos entre consultas al mapa de obstrucciones")
     args = parser.parse_args()
+
+    service_monitor = ServiceMonitor(args.dish, CONFIG)
+    service_monitor.start()
 
     poller = DishPoller(args.dish, interval=args.interval)
     poller.start()

@@ -71,6 +71,11 @@ Pensadas para avisar solo lo que realmente importa, con tiempos sostenidos para 
 - 🌩️ **Obstrucción en alza + pronóstico confirma tormenta** — si `fraction_obstructed` cruza `weather_alert_obstruction_threshold` (más bajo y más rápido que la alerta anterior, no espera tiempo sostenido) y el pronóstico de Open-Meteo marca lluvia/tormenta/granizo ahora o en las próximas `weather_alert_forecast_hours` horas. Nace de una observación real: en banda Ku/Ka la lluvia y sobre todo el granizo atenúan la señal (rain fade) y el dish puede reportarlo como obstrucción — este chequeo cruza ambas señales para avisar con mejor contexto, sin repetir mientras la obstrucción se mantiene arriba del umbral.
 - ⚠️ **Alertas de hardware** (recalentamiento, mástil desalineado, motores trabados, agua detectada) — avisan una vez al activarse, no se repiten mientras siguen activas.
 
+- 🟠 **Servicio caído con el dish conectado** — el caso que la alerta de desconexión no ve: el dish sigue `CONNECTED` al satélite pero no pasa internet. Pasa, por ejemplo, cuando Starlink suspende la cuenta por un pago rechazado. Se detecta con dos señales: `disablement_code` del dish (distinto de `OKAY`: `NO_ACTIVE_ACCOUNT`, `DATA_OVERAGE_SANDBOX_POLICY`, etc., cada `service_check_interval_s`) y, como respaldo, una prueba de salida a internet (conexión TCP a `internet_check_hosts` cada `internet_check_interval_s`). Avisa si dura más de `service_alert_after_s`, y avisa de nuevo al volver, con la duración y las horas.
+- **Avisos que no se pueden mandar quedan en cola.** Sin internet no hay Telegram: el aviso de inicio de una suspensión casi nunca puede salir en el momento. Queda guardado (hasta `telegram_queue_max`) y se manda cuando vuelve la conexión, marcado con la hora en que se generó. Vale para todas las alertas, no solo esta.
+
+La tarjeta **Servicio** del panel muestra lo mismo en vivo: *Activo*, *Suspendido* (con el motivo) o *Sin internet*.
+
 No hay alertas por latencia/velocidad puntual — generaría demasiado ruido para el valor que aporta.
 
 ## Arquitectura

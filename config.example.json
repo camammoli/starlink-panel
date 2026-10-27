@@ -11,8 +11,18 @@
     "obstruction_sustained_s": 300,
     "hardware_alerts": true,
     "weather_alert_enabled": true,
-    "weather_alert_obstruction_threshold": 0.10,
-    "weather_alert_forecast_hours": 2
+    "weather_alert_obstruction_threshold": 0.1,
+    "weather_alert_forecast_hours": 2,
+    "service_alert_enabled": true,
+    "service_alert_after_s": 300,
+    "service_check_interval_s": 30,
+    "internet_check_interval_s": 60,
+    "internet_check_hosts": [
+      "1.1.1.1:443",
+      "8.8.8.8:53"
+    ],
+    "internet_check_timeout_s": 5,
+    "telegram_queue_max": 50
   },
   "history": {
     "retention_days": 90,
