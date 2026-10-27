@@ -45,3 +45,39 @@ suspensión (inicio en cola, llega al volver junto con «restablecido»), corte 
 aviso, dish desconectado no duplica el aviso, sin internet con código `OKAY`, código sin traducir,
 tope y orden de la cola, alerta de desconexión encolada sin internet. Además, corrida en loli contra
 el dish real en un puerto de prueba: `disablement_code = OKAY`, `internet_ok = true`.
+
+## TKT-0839 — Apuntado ideal vs real + registro de microcortes (2026-10-26)
+
+**Apuntado.** El status crudo trae `alignment_stats`: dirección real (`boresight_*`) y la que el
+dish calcula como ideal (`desired_boresight_*`, lo mismo que muestra la app en «Orientación»),
+además de `tilt_angle_deg` y `attitude_uncertainty_deg`. `ServiceMonitor` ya pedía ese status cada
+30 s, así que lo guarda junto con `alerts.lower_signal_than_predicted`.
+- `alignment_advice()`: desvío angular real (fórmula de distancia esférica: a elevaciones altas,
+  los grados de azimut pesan poco) y la indicación para corregirlo a mano. El giro se dice como
+  izquierda o derecha «parado detrás del dish» y no con puntos cardinales, porque un desvío chico
+  puede quedar dentro del mismo sector (190° y 180° son los dos «S»). Bajar el azimut = izquierda.
+  Si `uncertainty_deg` supera `alignment.max_uncertainty_deg`, se avisa que el dato no es fiable.
+- `/api/status` agrega `alignment`. Frontend: tarjeta «Apuntado» y, en el mapa del cielo, la
+  dirección ideal como anillo blanco unido a la real con una línea punteada.
+
+**Microcortes.** `get_history().outages` trae cada corte con inicio (ns en tiempo GPS), duración,
+causa (`DishOutage.Cause`) y si cambió de satélite. El dish guarda ~12 h.
+- `OutageStore`: hilo que los copia cada `outages.poll_interval_s` a la tabla `outages` de
+  `history.db` (`start_ns` como clave primaria → `INSERT OR IGNORE`, releer no duplica). Unix =
+  ns/1e9 + 315964800 − 18 (`GPS_EPOCH_UNIX`, `GPS_UTC_LEAP_S`). Retención = `history.retention_days`.
+- `/api/outages?from&to`: filas, resumen por causa (`OUTAGE_CAUSE_LABELS` en castellano), total y
+  estado de la última lectura. Frontend: sección «Microcortes», mismo rango que el historial.
+
+**Config nueva:** `alignment.tolerance_deg` (3), `alignment.max_uncertainty_deg` (3),
+`outages.poll_interval_s` (600).
+
+**Pruebas.** Apuntado: valores reales del día (desvío 10,8°, «girarlo 12° a la izquierda: de 192°
+(SSO) a 180° (S)», «inclinarlo 10° más»), bien apuntado, cruce de 0°/360°, levantar, incertidumbre
+alta. `OutageStore` contra una base temporal: sin duplicados al releer, conversión GPS→Unix,
+resumen por causa, retención. En loli contra el dish real: 8 microcortes guardados (7 «sin
+respuesta del servidor», 1 «sin bajada», 6 s en total).
+
+**Anotado en el README como pendiente:** `signal_quality`, reinicio programado por actualización,
+restricción de velocidad del plan, configuración del dish (se puede leer; corrige lo que decía el
+README sobre el modo nieve), `bootcount`, inclinación, tiempos de arranque, router y modo puente,
+velocidad ethernet, clase de servicio, `is_snr_persistently_low`.

@@ -25,6 +25,7 @@ import copy
 import csv
 import io
 import json
+import math
 import socket
 import sqlite3
 import threading
@@ -81,7 +82,41 @@ DEFAULT_CONFIG = {
     "weather": {
         "poll_interval_s": 900,  # 15 min - el pronostico de Open-Meteo no cambia mas seguido
     },
+    "alignment": {
+        "tolerance_deg": 3,            # desvio por debajo del cual se considera bien apuntado
+        "max_uncertainty_deg": 3,      # si el dish duda mas que esto de su propia orientacion, se avisa
+    },
+    "outages": {
+        "poll_interval_s": 600,        # el dish guarda ~12 h de cortes; cada 10 min sobra
+    },
 }
+
+# El dish fecha los cortes en tiempo GPS (ns desde 6/1/1980). GPS no aplica los
+# segundos intercalares de UTC: hoy van 18 de diferencia (cambia solo si se
+# agrega un segundo intercalar, el ultimo fue en 2016).
+GPS_EPOCH_UNIX = 315964800
+GPS_UTC_LEAP_S = 18
+
+# Causas de corte (proto DishOutage.Cause), en castellano para el panel
+OUTAGE_CAUSE_LABELS = {
+    "UNKNOWN": "desconocida",
+    "BOOTING": "arrancando",
+    "STOWED": "guardado (stow)",
+    "THERMAL_SHUTDOWN": "apagado por temperatura",
+    "NO_SCHEDULE": "sin turno asignado",
+    "NO_SATS": "sin satélites",
+    "OBSTRUCTED": "obstrucción",
+    "NO_DOWNLINK": "sin bajada",
+    "NO_PINGS": "sin respuesta del servidor",
+    "ACTUATOR_ACTIVITY": "motores moviéndose",
+    "CABLE_TEST": "prueba de cable",
+    "SLEEPING": "modo ahorro",
+    "SKY_SEARCH": "buscando cielo",
+    "INHIBIT_RF": "radio inhibida",
+}
+
+PUNTOS_CARDINALES = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                     "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
 
 # Codigos WMO (weather_code de Open-Meteo) que consideramos "tormenta" para la
 # alerta de clima: lluvia moderada/fuerte, chaparrones, tormenta electrica,
@@ -391,6 +426,126 @@ def service_problem(service, connected):
     return None
 
 
+def punto_cardinal(az):
+    return PUNTOS_CARDINALES[int(((az % 360) + 11.25) // 22.5) % 16]
+
+
+def alignment_advice(al, cfg):
+    """Compara hacia donde apunta el dish con hacia donde el propio dish dice
+    que deberia apuntar (lo mismo que muestra la app oficial en "Orientacion")
+    y arma la indicacion para corregirlo a mano (el Mini no tiene motores)."""
+    if not al or al.get("desired_az") is None:
+        return None
+    tol = cfg.get("tolerance_deg", 3)
+    az_diff = ((al["desired_az"] - al["actual_az"] + 180) % 360) - 180
+    el_diff = al["desired_el"] - al["actual_el"]
+    e1, e2 = math.radians(al["actual_el"]), math.radians(al["desired_el"])
+    cos_d = math.sin(e1) * math.sin(e2) + math.cos(e1) * math.cos(e2) * math.cos(math.radians(az_diff))
+    offset = math.degrees(math.acos(max(-1.0, min(1.0, cos_d))))  # desvio angular real
+    actual, deseado = al["actual_az"] % 360, al["desired_az"] % 360
+    girar = None
+    if abs(az_diff) >= tol:
+        # Parado detras del dish mirando hacia donde mira, bajar el azimut es girar a la izquierda
+        lado = "izquierda" if az_diff < 0 else "derecha"
+        girar = (f"Girarlo {abs(az_diff):.0f}° a la {lado} (parado detrás del dish): de {actual:.0f}° "
+                 f"({punto_cardinal(actual)}) a {deseado:.0f}° ({punto_cardinal(deseado)})")
+    inclinar = None
+    if abs(el_diff) >= tol:
+        if el_diff < 0:
+            inclinar = f"Inclinarlo {abs(el_diff):.0f}° más (que la cara mire más hacia el horizonte)"
+        else:
+            inclinar = f"Levantarlo {el_diff:.0f}° (que la cara mire más hacia arriba)"
+    return {
+        **al,
+        "az_diff": az_diff,
+        "el_diff": el_diff,
+        "offset_deg": offset,
+        "ok": offset < tol,
+        "reliable": (al.get("uncertainty_deg") or 0) <= cfg.get("max_uncertainty_deg", 3),
+        "girar": girar,
+        "inclinar": inclinar,
+    }
+
+
+class OutageStore:
+    """Cortes que registra el propio dish (get_history().outages): cada uno con
+    inicio, duracion y causa, con resolucion de fracciones de segundo. El dish
+    solo guarda unas 12 h, asi que se copian a la base cada `poll_interval_s`.
+    La clave es el inicio en ns: volver a leer los mismos no duplica nada."""
+
+    def __init__(self, target, interval, retention_days):
+        self.target = target
+        self.interval = interval
+        self.retention_days = retention_days
+        self.lock = threading.Lock()
+        self.last_ok = None
+        self.last_error = None
+        with self._conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS outages (
+                    start_ns INTEGER PRIMARY KEY,
+                    ts REAL,
+                    duration_s REAL,
+                    cause TEXT,
+                    did_switch INTEGER
+                )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS outages_ts ON outages(ts)")
+
+    def _conn(self):
+        return sqlite3.connect(DB_FILE, timeout=10)
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def save(self, outages):
+        """outages: iterable de (start_ns, duration_s, cause, did_switch). Devuelve cuantos eran nuevos."""
+        rows = [(int(ns), ns / 1e9 + GPS_EPOCH_UNIX - GPS_UTC_LEAP_S, dur, cause, int(bool(sw)))
+                for ns, dur, cause, sw in outages]
+        with self.lock, self._conn() as conn:
+            before = conn.total_changes
+            conn.executemany("INSERT OR IGNORE INTO outages VALUES (?, ?, ?, ?, ?)", rows)
+            nuevos = conn.total_changes - before
+            conn.execute("DELETE FROM outages WHERE ts < ?", (time.time() - self.retention_days * 86400,))
+        return nuevos
+
+    def _loop(self):
+        ctx = starlink_grpc.ChannelContext(target=self.target)
+        while True:
+            try:
+                h = starlink_grpc.get_history(ctx)
+                causes = None
+                data = []
+                for o in h.outages:
+                    if causes is None:
+                        causes = o.DESCRIPTOR.fields_by_name["cause"].enum_type
+                    data.append((o.start_timestamp_ns, o.duration_ns / 1e9,
+                                 causes.values_by_number[o.cause].name if o.cause in causes.values_by_number else str(o.cause),
+                                 o.did_switch))
+                self.save(data)
+                self.last_ok, self.last_error = time.time(), None
+            except Exception as e:
+                self.last_error = str(e)
+            time.sleep(self.interval)
+
+    def query(self, ts_from, ts_to, limit=5000):
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT ts, duration_s, cause, did_switch FROM outages WHERE ts >= ? AND ts <= ? ORDER BY ts DESC LIMIT ?",
+                (ts_from, ts_to, limit)).fetchall()
+            totals = conn.execute(
+                "SELECT cause, COUNT(*) n, SUM(duration_s) total FROM outages WHERE ts >= ? AND ts <= ? GROUP BY cause ORDER BY n DESC",
+                (ts_from, ts_to)).fetchall()
+        return {
+            "rows": [{**dict(r), "cause_label": OUTAGE_CAUSE_LABELS.get(r["cause"], r["cause"])} for r in rows],
+            "by_cause": [{**dict(t), "cause_label": OUTAGE_CAUSE_LABELS.get(t["cause"], t["cause"])} for t in totals],
+            "count": sum(t["n"] for t in totals),
+            "total_s": sum(t["total"] or 0 for t in totals),
+            "last_ok": self.last_ok,
+            "last_error": self.last_error,
+        }
+
+
 def internet_reachable(hosts, timeout):
     """True si alguno de los host:puerto acepta una conexion TCP."""
     for hp in hosts:
@@ -426,14 +581,26 @@ class ServiceMonitor:
             now = time.time()
             if now - last_code >= code_every:
                 last_code = now
+                alignment = None
                 try:
                     st = starlink_grpc.get_status(ctx)
                     enum = st.DESCRIPTOR.fields_by_name["disablement_code"].enum_type
                     code = enum.values_by_number[st.disablement_code].name
+                    a = st.alignment_stats
+                    alignment = {
+                        "actual_az": a.boresight_azimuth_deg,
+                        "actual_el": a.boresight_elevation_deg,
+                        "desired_az": a.desired_boresight_azimuth_deg,
+                        "desired_el": a.desired_boresight_elevation_deg,
+                        "tilt_deg": a.tilt_angle_deg,
+                        "uncertainty_deg": a.attitude_uncertainty_deg,
+                        "lower_signal_than_predicted": bool(st.alerts.lower_signal_than_predicted),
+                    }
                 except Exception:
                     code = None  # dish inalcanzable: eso lo cubre la alerta de desconexion
                 with self.lock:
                     self.latest["disablement_code"] = code
+                    self.latest["alignment"] = alignment
                     self.latest["ts"] = now
             if now - last_net >= net_every:
                 last_net = now
@@ -743,6 +910,7 @@ class ObstructionMapCache:
 poller: DishPoller = None  # type: ignore
 obstruction_cache: ObstructionMapCache = None  # type: ignore
 service_monitor: ServiceMonitor = None  # type: ignore
+outage_store: OutageStore = None  # type: ignore
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -769,6 +937,7 @@ class Handler(BaseHTTPRequestHandler):
             latest = data["latest"]
             connected = bool(latest.get("ok")) and latest["status"].get("state") == "CONNECTED"
             svc["problem"] = service_problem(svc, connected)
+            data["alignment"] = alignment_advice(svc.pop("alignment", None), CONFIG["alignment"])
             data["service"] = svc
             self._send_json(data)
             return
@@ -796,6 +965,14 @@ class Handler(BaseHTTPRequestHandler):
             ts_to = float(params.get("to", now))
             rows = history_store.query(ts_from, ts_to)
             self._send_json({"rows": rows})
+            return
+
+        if route == "/api/outages":
+            params = self._query_params()
+            now = time.time()
+            ts_from = float(params.get("from", now - 86400))
+            ts_to = float(params.get("to", now))
+            self._send_json(outage_store.query(ts_from, ts_to))
             return
 
         if route == "/api/history/export":
@@ -848,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global poller, obstruction_cache, service_monitor
+    global poller, obstruction_cache, service_monitor, outage_store
     parser = argparse.ArgumentParser(description="Panel de estado de Starlink")
     parser.add_argument("--port", type=int, default=8850)
     parser.add_argument("--dish", default="192.168.100.1:9200", help="IP:puerto del dish")
@@ -859,6 +1036,10 @@ def main():
 
     service_monitor = ServiceMonitor(args.dish, CONFIG)
     service_monitor.start()
+
+    outage_store = OutageStore(args.dish, CONFIG["outages"]["poll_interval_s"],
+                               CONFIG["history"]["retention_days"])
+    outage_store.start()
 
     poller = DishPoller(args.dish, interval=args.interval)
     poller.start()

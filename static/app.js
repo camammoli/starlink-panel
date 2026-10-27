@@ -219,6 +219,28 @@ function drawSky(dishDir, satellites, obstructionMap) {
     ctx.fill();
   });
 
+  // Dirección ideal según el propio dish: anillo blanco + línea desde la real
+  const ideal = window._alignment;
+  if (ideal && ideal.desired_az != null) {
+    const [ix, iy] = toXY(ideal.desired_az, ideal.desired_el);
+    if (dishDir && dishDir.az != null && dishDir.el != null && !ideal.ok) {
+      const [rx, ry] = toXY(dishDir.az, dishDir.el);
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(ix, iy);
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.beginPath();
+    ctx.arc(ix, iy, 8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
   // Dirección real del dish (encima, más grande)
   if (dishDir && dishDir.az != null && dishDir.el != null) {
     const [x, y] = toXY(dishDir.az, dishDir.el);
@@ -255,6 +277,26 @@ function updateService(svc) {
   d.textContent = svc.internet_ok === false ? 'sin salida a internet' : 'cuenta e internet OK';
 }
 
+// ── Apuntado: real vs ideal (el Mini no tiene motores, se corrige a mano) ──
+function updateAlignment(al) {
+  window._alignment = al;
+  const v = document.getElementById('v-align');
+  const d = document.getElementById('d-align');
+  if (!v) return;
+  if (!al) { v.textContent = '—'; v.style.color = ''; d.textContent = 'sin datos'; return; }
+  if (al.ok) {
+    v.textContent = 'Bien';
+    v.style.color = 'var(--ok)';
+    d.textContent = `desvío ${al.offset_deg.toFixed(1)}°`;
+  } else {
+    v.innerHTML = `Desviado <small>${al.offset_deg.toFixed(0)}°</small>`;
+    v.style.color = 'var(--warn)';
+    d.textContent = [al.girar, al.inclinar].filter(Boolean).join(' · ');
+  }
+  if (al.lower_signal_than_predicted) d.textContent += ' · el dish avisa señal más baja que la esperada';
+  if (!al.reliable) d.textContent += ` · ojo: el dish duda ±${al.uncertainty_deg.toFixed(1)}° de su orientación`;
+}
+
 // ── Polling del backend ──────────────────────────────────────────────────────
 async function poll() {
   try {
@@ -262,6 +304,7 @@ async function poll() {
     const data = await res.json();
     updateCards(data.latest);
     updateService(data.service);
+    updateAlignment(data.alignment);
     drawChart(data.history);
     drawSky(window._dishDirection, window._visibleSats, window._obstructionMap);
   } catch (e) {
@@ -476,6 +519,37 @@ async function loadHistory() {
   `).join('') || '<tr><td colspan="9" style="padding:10px;color:var(--muted)">Sin datos en este rango todavía.</td></tr>';
 
   drawHistChart(rows);
+  loadOutages(from, now);
+}
+
+function fmtDur(s) {
+  if (s < 60) return `${s.toFixed(1).replace('.', ',')} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min ${Math.round(s % 60)} s` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+async function loadOutages(from, to) {
+  const sum = document.getElementById('out-summary');
+  const tbody = document.getElementById('out-table-body');
+  let data;
+  try {
+    data = await (await fetch(`/api/outages?from=${from}&to=${to}`)).json();
+  } catch (e) {
+    sum.textContent = 'No se pudieron cargar los microcortes.';
+    return;
+  }
+  sum.innerHTML = data.count
+    ? `<b>${data.count}</b> cortes, <b>${fmtDur(data.total_s)}</b> en total — ` +
+      data.by_cause.map(c => `${c.cause_label}: ${c.n}`).join(' · ')
+    : 'Sin cortes registrados en este rango.';
+  if (data.last_error) sum.innerHTML += ` <span style="color:var(--warn)">(última lectura del dish falló: ${data.last_error})</span>`;
+  tbody.innerHTML = data.rows.slice(0, 500).map(r => `
+    <tr style="border-top:1px solid var(--line)">
+      <td style="padding:5px 10px">${new Date(r.ts * 1000).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'medium' })}</td>
+      <td style="padding:5px 10px;text-align:right">${fmtDur(r.duration_s)}</td>
+      <td style="padding:5px 10px">${r.cause_label}</td>
+      <td style="padding:5px 10px">${r.did_switch ? 'sí' : 'no'}</td>
+    </tr>`).join('') || '<tr><td colspan="4" style="padding:10px;color:var(--muted)">—</td></tr>';
 }
 
 function drawHistChart(rows) {

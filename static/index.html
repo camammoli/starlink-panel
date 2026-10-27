@@ -30,6 +30,7 @@
 
   <div class="grid">
     <div class="card"><div class="k">Servicio</div><div class="v" id="v-service">—</div><div class="svc-detail" id="d-service"></div></div>
+    <div class="card"><div class="k">Apuntado</div><div class="v" id="v-align">—</div><div class="svc-detail" id="d-align"></div></div>
     <div class="card"><div class="k">Latencia</div><div class="v" id="v-latency">—</div><div class="range" id="r-latency">—</div></div>
     <div class="card"><div class="k">Bajada</div><div class="v" id="v-down">—</div><div class="range" id="r-down">—</div></div>
     <div class="card"><div class="k">Subida</div><div class="v" id="v-up">—</div><div class="range" id="r-up">—</div></div>
@@ -51,6 +52,7 @@
       <canvas id="sky" width="360" height="360"></canvas>
       <div class="sky-legend">
         <span><i style="background:#4a9eff"></i> Dirección real del dish</span>
+        <span><i style="background:transparent;border:2px solid #fff"></i> Dirección ideal (según el dish)</span>
         <span><i style="background:#e0a934"></i> Satélites Starlink sobre tu horizonte</span>
         <span><i style="background:#4ac97a"></i> Zona libre (mapa de obstrucciones)</span>
         <span><i style="background:#e05a4a"></i> Zona obstruida</span>
@@ -98,6 +100,24 @@
           </tr>
         </thead>
         <tbody id="hist-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="box" style="margin-top:16px">
+    <h2>Microcortes</h2>
+    <div class="hint" style="margin-top:0;margin-bottom:10px">Cortes que registra el propio dish, aunque duren menos de un segundo (el historial de arriba promedia por minuto y no los ve). Mismo rango que el historial. El dish guarda unas 12 h: lo anterior a la primera lectura del panel no está.</div>
+    <div id="out-summary" style="font-size:13px;margin-bottom:10px">—</div>
+    <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead style="position:sticky;top:0;background:var(--panel2)">
+          <tr>
+            <th style="text-align:left;padding:6px 10px">Inicio</th>
+            <th style="text-align:right;padding:6px 10px">Duración</th>
+            <th style="text-align:left;padding:6px 10px">Causa</th>
+            <th style="text-align:left;padding:6px 10px">Cambió de satélite</th>
+          </tr>
+        </thead>
+        <tbody id="out-table-body"></tbody>
       </table>
     </div>
   </div>
