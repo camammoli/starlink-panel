@@ -33,7 +33,9 @@
   },
   "alignment": {
     "tolerance_deg": 3,
-    "max_uncertainty_deg": 3
+    "max_uncertainty_deg": 3,
+    "aim_mode_interval_s": 3,
+    "aim_mode_duration_s": 900
   },
   "outages": {
     "poll_interval_s": 600
