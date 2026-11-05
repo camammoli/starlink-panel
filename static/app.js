@@ -297,6 +297,39 @@ function updateAlignment(al) {
   if (!al.reliable) d.textContent += ` · ojo: el dish duda ±${al.uncertainty_deg.toFixed(1)}° de su orientación`;
 }
 
+// ── Modo apuntado: el backend lee el apuntado cada pocos segundos por un rato ──
+function updateAimMode(aim, al) {
+  window._aimMode = aim;
+  const btn = document.getElementById('btn-aim');
+  const d = document.getElementById('d-aim');
+  if (!btn) return;
+  const on = !!(aim && aim.active);
+  btn.classList.toggle('on', on);
+  btn.textContent = on ? 'Terminar modo apuntado' : 'Modo apuntado';
+  if (!on) { d.textContent = ''; return; }
+  const mm = Math.floor(aim.seconds_left / 60), ss = String(aim.seconds_left % 60).padStart(2, '0');
+  let txt = `Lee cada ${aim.interval_s} s · se apaga en ${mm}:${ss}`;
+  if (al && al.desired_az != null) {
+    const deg = x => ((x % 360) + 360) % 360;
+    const edad = al.read_ts ? Math.max(0, Math.round(Date.now() / 1000 - al.read_ts)) : null;
+    txt += ` · ahora ${deg(al.actual_az).toFixed(1)}° / ${al.actual_el.toFixed(1)}°` +
+           ` → quiere ${deg(al.desired_az).toFixed(1)}° / ${al.desired_el.toFixed(1)}°` +
+           ` · plato inclinado ${al.tilt_deg.toFixed(1)}°` +
+           (edad != null ? ` · lectura de hace ${edad} s` : '');
+  }
+  d.textContent = txt;
+}
+
+async function toggleAimMode() {
+  const on = !(window._aimMode && window._aimMode.active);
+  try {
+    const res = await fetch('/api/aim-mode', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                              body: JSON.stringify({on})});
+    updateAimMode(await res.json(), window._alignment);
+  } catch (e) { /* el proximo poll muestra el estado real */ }
+}
+document.getElementById('btn-aim')?.addEventListener('click', toggleAimMode);
+
 // ── Polling del backend ──────────────────────────────────────────────────────
 async function poll() {
   try {
@@ -305,6 +338,7 @@ async function poll() {
     updateCards(data.latest);
     updateService(data.service);
     updateAlignment(data.alignment);
+    updateAimMode(data.aim_mode, data.alignment);
     drawChart(data.history);
     drawSky(window._dishDirection, window._visibleSats, window._obstructionMap);
   } catch (e) {

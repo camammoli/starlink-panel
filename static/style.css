@@ -50,3 +50,6 @@ canvas{display:block;max-width:100%}
 button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
   border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer}
 button:hover{border-color:var(--accent)}
+.aim-btn{margin-top:8px;font-size:11px;padding:4px 10px}
+.aim-btn.on{border-color:var(--accent);color:var(--accent)}
+#d-aim{font-variant-numeric:tabular-nums}

@@ -81,3 +81,24 @@ respuesta del servidor», 1 «sin bajada», 6 s en total).
 restricción de velocidad del plan, configuración del dish (se puede leer; corrige lo que decía el
 README sobre el modo nieve), `bootcount`, inclinación, tiempos de arranque, router y modo puente,
 velocidad ethernet, clase de servicio, `is_snr_persistently_low`.
+
+## Modo apuntado — 05/11/2026
+
+**Pedido:** Carlos acomodaba el dish a mano y el panel tardaba en mostrar el cambio: el apuntado se
+leía junto con `disablement_code`, cada `alerts.service_check_interval_s` (30 s).
+
+**Hecho:**
+- `ServiceMonitor.set_aim_mode(on)` / `aim_mode()`: mientras está activo, el hilo lee el status
+  crudo (apuntado incluido) cada `alignment.aim_mode_interval_s` (3 s) y duerme 1 s en vez de 5.
+  Se apaga solo a los `alignment.aim_mode_duration_s` (900 s), para no dejar la Pi consultando de más.
+- `POST /api/aim-mode {"on": true|false}` (cuerpo de hasta 1 KB). `/api/status` agrega `aim_mode`
+  (`active`, `seconds_left`, `interval_s`) y `alignment.read_ts`.
+- Frontend: botón «Modo apuntado» / «Terminar modo apuntado» en la tarjeta Apuntado, con cuenta
+  regresiva, azimut/elevación actuales → deseados, inclinación del plato y «lectura de hace N s».
+
+**Pruebas:** en loli contra el dish real: lecturas cada 3–4 s, `read_ts` de 0–2 s, botón y texto
+verificados con Playwright, sin errores de consola. Servicio reiniciado, respaldos `*.bak_*_aim`.
+
+**Observación:** antes del cambio, entre 11:04 y 11:33, la inclinación del plato (`tilt_deg`) quedó
+fija en 20,9° aunque Carlos dijo haberlo movido. Con el modo apuntado se puede ver si el dish
+registra el movimiento al instante.

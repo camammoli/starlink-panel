@@ -85,6 +85,10 @@ DEFAULT_CONFIG = {
     "alignment": {
         "tolerance_deg": 3,            # desvio por debajo del cual se considera bien apuntado
         "max_uncertainty_deg": 3,      # si el dish duda mas que esto de su propia orientacion, se avisa
+        # Modo apuntado: mientras se acomoda el dish a mano, leer el apuntado
+        # seguido en vez de cada service_check_interval_s; se apaga solo.
+        "aim_mode_interval_s": 3,
+        "aim_mode_duration_s": 900,
     },
     "outages": {
         "poll_interval_s": 600,        # el dish guarda ~12 h de cortes; cada 10 min sobra
@@ -566,8 +570,21 @@ class ServiceMonitor:
     def __init__(self, target, cfg):
         self.target = target
         self.cfg = cfg.get("alerts", {})
+        self.aim_cfg = cfg.get("alignment", {})
+        self.aim_until = 0.0
         self.lock = threading.Lock()
         self.latest = {"disablement_code": None, "internet_ok": None, "ts": None, "internet_ts": None}
+
+    def set_aim_mode(self, on):
+        """Prende (por aim_mode_duration_s) o apaga el modo apuntado."""
+        with self.lock:
+            self.aim_until = time.time() + self.aim_cfg.get("aim_mode_duration_s", 900) if on else 0.0
+        return self.aim_mode()
+
+    def aim_mode(self):
+        left = self.aim_until - time.time()
+        return {"active": left > 0, "seconds_left": max(0, int(left)),
+                "interval_s": self.aim_cfg.get("aim_mode_interval_s", 3)}
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -579,7 +596,9 @@ class ServiceMonitor:
         last_code = last_net = 0.0
         while True:
             now = time.time()
-            if now - last_code >= code_every:
+            aiming = now < self.aim_until
+            every = self.aim_cfg.get("aim_mode_interval_s", 3) if aiming else code_every
+            if now - last_code >= every:
                 last_code = now
                 alignment = None
                 try:
@@ -595,6 +614,7 @@ class ServiceMonitor:
                         "tilt_deg": a.tilt_angle_deg,
                         "uncertainty_deg": a.attitude_uncertainty_deg,
                         "lower_signal_than_predicted": bool(st.alerts.lower_signal_than_predicted),
+                        "read_ts": now,
                     }
                 except Exception:
                     code = None  # dish inalcanzable: eso lo cubre la alerta de desconexion
@@ -609,11 +629,13 @@ class ServiceMonitor:
                 with self.lock:
                     self.latest["internet_ok"] = ok
                     self.latest["internet_ts"] = now
-            time.sleep(5)
+            time.sleep(1 if aiming else 5)
 
     def snapshot(self):
         with self.lock:
-            return dict(self.latest)
+            snap = dict(self.latest)
+        snap["aim_mode"] = self.aim_mode()
+        return snap
 
 
 def fmt_duration(seconds):
@@ -928,6 +950,18 @@ class Handler(BaseHTTPRequestHandler):
     def _query_params(self):
         return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
 
+    def do_POST(self):
+        route = self.path.split("?")[0]
+        if route == "/api/aim-mode":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}") if n <= 1024 else {}
+            except ValueError:
+                body = {}
+            self._send_json(service_monitor.set_aim_mode(bool(body.get("on"))))
+            return
+        self.send_error(404)
+
     def do_GET(self):
         route = self.path.split("?")[0]
 
@@ -938,6 +972,7 @@ class Handler(BaseHTTPRequestHandler):
             connected = bool(latest.get("ok")) and latest["status"].get("state") == "CONNECTED"
             svc["problem"] = service_problem(svc, connected)
             data["alignment"] = alignment_advice(svc.pop("alignment", None), CONFIG["alignment"])
+            data["aim_mode"] = svc.pop("aim_mode")
             data["service"] = svc
             self._send_json(data)
             return
