@@ -1,5 +1,7 @@
 # Starlink Panel
 
+[![Archivado en Software Heritage](https://archive.softwareheritage.org/badge/origin/https://github.com/camammoli/starlink-panel/)](https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/camammoli/starlink-panel)
+
 Dashboard web independiente, gratis y liviano para monitorear tu Starlink en tiempo real: estado de conexión, latencia, velocidad, obstrucción, y hacia dónde apunta físicamente el dish — incluso un mapa de qué satélites Starlink tenés sobre tu horizonte ahora mismo.
 
 No es una app de SpaceX. Usa la API local de diagnóstico que el propio dish ya expone en tu red (`192.168.100.1:9200`), la misma que usa la app móvil oficial — sin nube, sin cuenta, sin telemetría a terceros.
